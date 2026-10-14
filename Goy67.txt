@@ -1,0 +1,672 @@
+--[[
+    VIDEO MENU v3
+    ------------------------------------------------------------------
+    Muestra TU video (copy_1A1D15D6-2981-4D00-9BA4-B0EC0C80EDA0.MOV)
+    con su música cuando abres el menú.
+
+    * SOLO descarga estos archivos de tu GitHub (no busca ningún otro):
+          menu_audio.ogg            -> la música
+          menu_sheet_1..14.jpg      -> los fotogramas del video
+    * La música se descarga primero y suena apenas llega.
+    * El video se dibuja con imágenes sincronizadas con la música
+      (no usa VideoFrame, que en celular no estaba mostrando el video).
+    * Todo queda guardado en caché: la 2ª vez que lo ejecutas abre al instante.
+
+    Abrir/cerrar: RightShift (PC) o el botón flotante (celular).
+]]
+
+-- ================= CONFIGURACIÓN =================
+local CONFIG = {
+    OWNER = "eduardomorfin58-ux",
+    REPO = "u",
+    BRANCH = "main",
+    CACHE_PREFIX = "vm3_", -- cámbialo si algún día subes archivos nuevos con el mismo nombre
+
+    TITLE = "MENU",
+    TOGGLE_KEY = Enum.KeyCode.RightShift,
+    START_VOLUME = 0.8,
+    PARALLEL = 4, -- descargas al mismo tiempo
+
+    AUDIO = { file = "menu_audio.ogg", size = 102834 },
+
+    -- Hojas de fotogramas (generadas del video)
+    FPS = 15,
+    FRAMES = 120,
+    COLS = 3,
+    ROWS = 3,
+    FRAME_W = 336,
+    FRAME_H = 330,
+    MARGIN = 2,
+    PADDING = 2,
+    SHEETS = {
+        { file = "menu_sheet_1.jpg", size = 92977 },
+        { file = "menu_sheet_2.jpg", size = 91404 },
+        { file = "menu_sheet_3.jpg", size = 58044 },
+        { file = "menu_sheet_4.jpg", size = 66533 },
+        { file = "menu_sheet_5.jpg", size = 83476 },
+        { file = "menu_sheet_6.jpg", size = 69503 },
+        { file = "menu_sheet_7.jpg", size = 74488 },
+        { file = "menu_sheet_8.jpg", size = 31772 },
+        { file = "menu_sheet_9.jpg", size = 43304 },
+        { file = "menu_sheet_10.jpg", size = 53240 },
+        { file = "menu_sheet_11.jpg", size = 48466 },
+        { file = "menu_sheet_12.jpg", size = 57775 },
+        { file = "menu_sheet_13.jpg", size = 65211 },
+        { file = "menu_sheet_14.jpg", size = 28323 },
+    },
+}
+-- ================================================
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+
+local player = Players.LocalPlayer
+local getAsset = getcustomasset or getsynasset
+
+local function getGuiParent()
+    local ok, hui = pcall(function()
+        return gethui and gethui()
+    end)
+    if ok and hui then return hui end
+    local ok2 = pcall(function() return CoreGui.Name end)
+    if ok2 then return CoreGui end
+    return player:WaitForChild("PlayerGui")
+end
+
+local guiParent = getGuiParent()
+local old = guiParent:FindFirstChild("VideoMenuGui")
+if old then old:Destroy() end
+
+-- ================= DESCARGA (solo los archivos de arriba) =================
+local BASE = ("https://raw.githubusercontent.com/%s/%s/%s/"):format(CONFIG.OWNER, CONFIG.REPO, CONFIG.BRANCH)
+
+local function httpGet(url)
+    local ok, res = pcall(function()
+        return game:HttpGet(url)
+    end)
+    if ok and type(res) == "string" and #res > 0 then return res end
+
+    local req = (syn and syn.request) or http_request or request or (http and http.request)
+    if req then
+        local ok2, r = pcall(req, { Url = url, Method = "GET" })
+        if ok2 and type(r) == "table" and type(r.Body) == "string" and #r.Body > 0
+            and (r.StatusCode == nil or r.StatusCode == 200) then
+            return r.Body
+        end
+    end
+    return nil
+end
+
+-- Devuelve el asset listo para Roblox, o nil + el motivo del error.
+local function fetchFile(entry)
+    if not (writefile and getAsset) then
+        return nil, "tu ejecutor no soporta writefile/getcustomasset"
+    end
+    local cache = CONFIG.CACHE_PREFIX .. entry.file
+
+    -- 1) ¿ya está guardado y completo? -> carga instantánea
+    if isfile and readfile then
+        local okI, exists = pcall(isfile, cache)
+        if okI and exists then
+            local okR, data = pcall(readfile, cache)
+            if okR and type(data) == "string" and #data == entry.size then
+                local okA, asset = pcall(getAsset, cache)
+                if okA and asset then return asset end
+            end
+        end
+    end
+
+    -- 2) descargar (hasta 3 intentos)
+    local err = entry.file .. ": no se pudo descargar de GitHub"
+    for attempt = 1, 3 do
+        local data = httpGet(BASE .. entry.file)
+        if data and (#data == entry.size or (attempt == 3 and #data > 1000)) then
+            local okW, errW = pcall(writefile, cache, data)
+            if not okW then return nil, entry.file .. ": writefile falló (" .. tostring(errW) .. ")" end
+            local okA, asset = pcall(getAsset, cache)
+            if okA and asset then return asset end
+            return nil, entry.file .. ": getcustomasset falló"
+        end
+        if data then
+            err = ("%s: llegó incompleto (%d de %d bytes)"):format(entry.file, #data, entry.size)
+        end
+        task.wait(0.3 * attempt)
+    end
+    return nil, err
+end
+
+-- ================= INTERFAZ =================
+local function make(class, props, parent)
+    local obj = Instance.new(class)
+    for k, v in pairs(props) do
+        obj[k] = v
+    end
+    if parent then obj.Parent = parent end
+    return obj
+end
+
+local function corner(obj, radius)
+    make("UICorner", { CornerRadius = UDim.new(0, radius) }, obj)
+end
+
+local WIN_W, WIN_H = 540, 330
+local VID_X, VID_Y, VID_W, VID_H = 14, 15, 306, 300
+local PANEL_X = VID_X + VID_W + 16
+local PANEL_W = WIN_W - PANEL_X - 14
+
+local gui = make("ScreenGui", {
+    Name = "VideoMenuGui",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = 999,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, guiParent)
+
+local openBtn = make("TextButton", {
+    Name = "OpenButton",
+    Size = UDim2.fromOffset(110, 36),
+    Position = UDim2.new(0, 14, 0.5, -18),
+    BackgroundColor3 = Color3.fromRGB(25, 25, 30),
+    TextColor3 = Color3.new(1, 1, 1),
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    Text = CONFIG.TITLE,
+    Visible = false,
+}, gui)
+corner(openBtn, 10)
+
+local main = make("Frame", {
+    Name = "Main",
+    Size = UDim2.fromOffset(WIN_W, WIN_H),
+    Position = UDim2.new(0.5, -WIN_W / 2, 0.5, -WIN_H / 2),
+    BackgroundColor3 = Color3.fromRGB(10, 10, 14),
+    BorderSizePixel = 0,
+    Visible = false,
+}, gui)
+corner(main, 14)
+
+-- Zona del video (las hojas de imágenes se apilan aquí)
+local videoHolder = make("Frame", {
+    Name = "VideoHolder",
+    Position = UDim2.fromOffset(VID_X, VID_Y),
+    Size = UDim2.fromOffset(VID_W, VID_H),
+    BackgroundColor3 = Color3.new(0, 0, 0),
+    BorderSizePixel = 0,
+    ClipsDescendants = true,
+}, main)
+corner(videoHolder, 10)
+
+-- Tapa negra: oculta las hojas que no se están mostrando (ZIndex 1 queda debajo)
+make("Frame", {
+    Name = "Cover",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.new(0, 0, 0),
+    BorderSizePixel = 0,
+    ZIndex = 2,
+}, videoHolder)
+
+local loadingLabel = make("TextLabel", {
+    Name = "Loading",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+    Text = "Cargando video...",
+    TextColor3 = Color3.fromRGB(200, 200, 210),
+    Font = Enum.Font.Gotham,
+    TextSize = 14,
+    TextWrapped = true,
+    ZIndex = 4,
+}, videoHolder)
+
+-- Zona para arrastrar la ventana
+local dragArea = make("Frame", {
+    Name = "DragArea",
+    Position = UDim2.fromOffset(PANEL_X - 6, 0),
+    Size = UDim2.fromOffset(PANEL_W + 20, 56),
+    BackgroundTransparency = 1,
+    ZIndex = 3,
+}, main)
+
+make("TextLabel", {
+    Name = "Title",
+    Position = UDim2.fromOffset(PANEL_X, 14),
+    Size = UDim2.fromOffset(PANEL_W - 40, 30),
+    BackgroundTransparency = 1,
+    Text = CONFIG.TITLE,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextColor3 = Color3.new(1, 1, 1),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 22,
+    ZIndex = 4,
+}, main)
+
+local closeBtn = make("TextButton", {
+    Name = "CloseButton",
+    Position = UDim2.fromOffset(WIN_W - 14 - 30, 14),
+    Size = UDim2.fromOffset(30, 30),
+    BackgroundColor3 = Color3.fromRGB(200, 50, 60),
+    Text = "X",
+    TextColor3 = Color3.new(1, 1, 1),
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    ZIndex = 5,
+}, main)
+corner(closeBtn, 8)
+
+local status = make("TextLabel", {
+    Name = "Status",
+    Position = UDim2.fromOffset(PANEL_X, 56),
+    Size = UDim2.fromOffset(PANEL_W, 52),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextColor3 = Color3.fromRGB(255, 220, 120),
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    ZIndex = 4,
+}, main)
+
+local function button(name, text, y)
+    local b = make("TextButton", {
+        Name = name,
+        Position = UDim2.fromOffset(PANEL_X, y),
+        Size = UDim2.fromOffset(PANEL_W, 34),
+        BackgroundColor3 = Color3.fromRGB(45, 45, 60),
+        TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBold,
+        TextSize = 14,
+        Text = text,
+        ZIndex = 4,
+    }, main)
+    corner(b, 8)
+    return b
+end
+
+local playBtn = button("PlayButton", "Pausar", 116)
+local restartBtn = button("RestartButton", "Reiniciar", 158)
+local muteBtn = button("MuteButton", "Sonido", 200)
+
+make("TextLabel", {
+    Name = "VolumeLabel",
+    Position = UDim2.fromOffset(PANEL_X, 246),
+    Size = UDim2.fromOffset(PANEL_W, 16),
+    BackgroundTransparency = 1,
+    Text = "Volumen",
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextColor3 = Color3.fromRGB(170, 170, 185),
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    ZIndex = 4,
+}, main)
+
+local sliderBack = make("Frame", {
+    Name = "SliderBack",
+    Position = UDim2.fromOffset(PANEL_X, 274),
+    Size = UDim2.fromOffset(PANEL_W, 8),
+    BackgroundColor3 = Color3.fromRGB(70, 70, 85),
+    BorderSizePixel = 0,
+    ZIndex = 4,
+}, main)
+corner(sliderBack, 4)
+
+local sliderFill = make("Frame", {
+    Name = "Fill",
+    Size = UDim2.fromScale(CONFIG.START_VOLUME, 1),
+    BackgroundColor3 = Color3.fromRGB(90, 170, 255),
+    BorderSizePixel = 0,
+    ZIndex = 5,
+}, sliderBack)
+corner(sliderFill, 4)
+
+local knob = make("Frame", {
+    Name = "Knob",
+    Size = UDim2.fromOffset(18, 18),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(CONFIG.START_VOLUME, 0, 0.5, 0),
+    BackgroundColor3 = Color3.new(1, 1, 1),
+    BorderSizePixel = 0,
+    ZIndex = 6,
+}, sliderBack)
+corner(knob, 9)
+
+-- Área táctil más grande para el slider (más fácil de tocar en celular)
+local sliderHit = make("Frame", {
+    Name = "SliderHit",
+    Position = UDim2.fromOffset(PANEL_X, 262),
+    Size = UDim2.fromOffset(PANEL_W, 32),
+    BackgroundTransparency = 1,
+    ZIndex = 7,
+}, main)
+
+-- ================= ESTADO =================
+local FRAMES_PER_SHEET = CONFIG.COLS * CONFIG.ROWS
+local DURATION = CONFIG.FRAMES / CONFIG.FPS
+local TOTAL_JOBS = 1 + #CONFIG.SHEETS
+
+local sheets = {}          -- [n] = { label = ImageLabel, ready = bool }
+local activeSheet = nil
+local shownFrame = -1
+local sound = nil
+local audioState = "loading" -- "loading" | "ready" | "failed"
+local playing = false
+local isOpen = false
+local clock = 0            -- reloj interno (solo se usa si la música no cargó)
+local lastT = 0
+local volume = CONFIG.START_VOLUME
+local lastVolume = CONFIG.START_VOLUME
+local muted = false
+local doneJobs = 0
+local failures = {}
+
+local conns = {}
+local function connect(signal, fn)
+    local c = signal:Connect(fn)
+    conns[#conns + 1] = c
+    return c
+end
+
+gui.Destroying:Connect(function()
+    for _, c in ipairs(conns) do
+        pcall(function() c:Disconnect() end)
+    end
+end)
+
+local function refreshStatus()
+    if #failures > 0 then
+        status.Text = "No cargó: " .. failures[1]
+        status.TextColor3 = Color3.fromRGB(255, 130, 130)
+    elseif doneJobs < TOTAL_JOBS then
+        status.Text = ("Cargando %d/%d..."):format(doneJobs, TOTAL_JOBS)
+        status.TextColor3 = Color3.fromRGB(255, 220, 120)
+    else
+        status.Text = ""
+    end
+end
+
+-- ================= VOLUMEN =================
+local function setVolume(v)
+    volume = math.clamp(v, 0, 1)
+    sliderFill.Size = UDim2.fromScale(volume, 1)
+    knob.Position = UDim2.new(volume, 0, 0.5, 0)
+    if volume > 0 then
+        lastVolume = volume
+        muted = false
+        muteBtn.Text = "Sonido"
+    else
+        muted = true
+        muteBtn.Text = "Mute"
+    end
+    if sound then sound.Volume = volume end
+end
+
+-- ================= REPRODUCCIÓN =================
+local function startPlayback(fromStart)
+    playing = true
+    if fromStart then
+        lastT = 0
+        clock = 0
+        shownFrame = -1
+    end
+    if sound then
+        if fromStart then sound.TimePosition = 0 end
+        sound:Play()
+    end
+    playBtn.Text = "Pausar"
+end
+
+local function pausePlayback()
+    playing = false
+    if sound then sound:Pause() end
+    playBtn.Text = "Reanudar"
+end
+
+-- Muestra el fotograma f (0 .. FRAMES-1). Devuelve false si su hoja aún no llegó.
+local function showFrame(f)
+    local sheet = sheets[math.floor(f / FRAMES_PER_SHEET) + 1]
+    if not (sheet and sheet.ready) then return false end
+
+    local k = f % FRAMES_PER_SHEET
+    local col = k % CONFIG.COLS
+    local row = math.floor(k / CONFIG.COLS)
+    -- +1 / -2: recorta 1 px por lado para no mostrar la línea negra entre fotogramas
+    local x = CONFIG.MARGIN + col * (CONFIG.FRAME_W + CONFIG.PADDING) + 1
+    local y = CONFIG.MARGIN + row * (CONFIG.FRAME_H + CONFIG.PADDING) + 1
+
+    local label = sheet.label
+    label.ImageRectOffset = Vector2.new(x, y)
+    label.ImageRectSize = Vector2.new(CONFIG.FRAME_W - 2, CONFIG.FRAME_H - 2)
+
+    if activeSheet ~= sheet then
+        if activeSheet then activeSheet.label.ZIndex = 1 end
+        label.ZIndex = 3 -- por encima de la tapa negra
+        activeSheet = sheet
+    end
+    if loadingLabel.Visible then loadingLabel.Visible = false end
+    return true
+end
+
+-- La música manda: el fotograma sale de la posición de la música.
+local function currentTime(dt)
+    if sound then
+        if sound.IsPlaying then lastT = sound.TimePosition end
+        return lastT
+    end
+    if audioState == "failed" and playing then
+        clock = clock + dt
+        if clock >= DURATION then clock = clock - DURATION end
+        lastT = clock
+    end
+    return lastT
+end
+
+local function update(dt)
+    if not isOpen then return end
+    local t = currentTime(dt)
+    local f = math.floor(t * CONFIG.FPS)
+    if f < 0 then f = 0 end
+    if f > CONFIG.FRAMES - 1 then f = CONFIG.FRAMES - 1 end
+    if f ~= shownFrame then
+        if showFrame(f) then shownFrame = f end
+    end
+end
+
+local updateError = false
+connect(RunService.Heartbeat, function(dt)
+    local ok, err = pcall(update, dt)
+    if not ok and not updateError then
+        updateError = true
+        status.Text = "Error: " .. tostring(err)
+    end
+end)
+
+-- ================= CARGA: primero la música, luego las imágenes en orden =================
+local function addSheet(n, asset)
+    local fw, fh = CONFIG.FRAME_W - 2, CONFIG.FRAME_H - 2
+    local label = make("ImageLabel", {
+        Name = "Sheet" .. n,
+        BackgroundTransparency = 1,
+        Size = UDim2.fromScale(1, 1),
+        Image = asset,
+        -- ya apunta al primer fotograma de la hoja (nunca se ve la hoja entera)
+        ImageRectOffset = Vector2.new(CONFIG.MARGIN + 1, CONFIG.MARGIN + 1),
+        ImageRectSize = Vector2.new(fw, fh),
+        ZIndex = 1,
+    }, videoHolder)
+
+    local sheet = { label = label, ready = false }
+    sheets[n] = sheet
+
+    -- espera a que Roblox termine de cargar la imagen (máx. 5 s) y la marca lista
+    task.spawn(function()
+        local t0 = os.clock()
+        while os.clock() - t0 < 5 do
+            local ok, loaded = pcall(function() return label.IsLoaded end)
+            if not ok then
+                task.wait(0.25)
+                break
+            end
+            if loaded then break end
+            task.wait()
+        end
+        sheet.ready = true
+    end)
+end
+
+local function addAudio(asset)
+    local s = make("Sound", {
+        Name = "MenuAudio",
+        SoundId = asset,
+        Looped = true,
+        Volume = volume,
+    }, gui)
+    sound = s
+    audioState = "ready"
+    if playing and isOpen then
+        s.TimePosition = 0
+        s:Play() -- ¡suena apenas llega!
+    end
+end
+
+local function startLoading()
+    local jobs = {}
+
+    jobs[#jobs + 1] = function()
+        local asset, err = fetchFile(CONFIG.AUDIO)
+        if asset then
+            addAudio(asset)
+        else
+            audioState = "failed" -- el video avanza solo, sin música
+            failures[#failures + 1] = err or CONFIG.AUDIO.file
+        end
+    end
+
+    for n, entry in ipairs(CONFIG.SHEETS) do
+        jobs[#jobs + 1] = function()
+            local asset, err = fetchFile(entry)
+            if asset then
+                addSheet(n, asset)
+            else
+                failures[#failures + 1] = err or entry.file
+                if n == 1 then loadingLabel.Text = "No se pudo cargar el video" end
+            end
+        end
+    end
+
+    local nextJob = 1
+    local function worker()
+        while true do
+            local j = nextJob
+            if j > #jobs then return end
+            nextJob = j + 1
+            local ok, err = pcall(jobs[j])
+            if not ok then failures[#failures + 1] = tostring(err) end
+            doneJobs = doneJobs + 1
+            refreshStatus()
+        end
+    end
+
+    refreshStatus()
+    for _ = 1, CONFIG.PARALLEL do
+        task.spawn(worker)
+    end
+end
+
+-- ================= ABRIR / CERRAR =================
+local function openMenu()
+    if isOpen then return end
+    isOpen = true
+    main.Visible = true
+    openBtn.Visible = false
+    startPlayback(true) -- entras al menú: video y música desde el principio
+end
+
+local function closeMenu()
+    if not isOpen then return end
+    isOpen = false
+    main.Visible = false
+    openBtn.Visible = true
+    pausePlayback()
+end
+
+openBtn.MouseButton1Click:Connect(openMenu)
+closeBtn.MouseButton1Click:Connect(closeMenu)
+
+playBtn.MouseButton1Click:Connect(function()
+    if playing then pausePlayback() else startPlayback(false) end
+end)
+
+restartBtn.MouseButton1Click:Connect(function()
+    startPlayback(true)
+end)
+
+muteBtn.MouseButton1Click:Connect(function()
+    if muted then
+        setVolume(lastVolume > 0 and lastVolume or 0.8)
+    else
+        local keep = volume
+        setVolume(0)
+        lastVolume = keep
+    end
+end)
+
+connect(UserInputService.InputBegan, function(input, processed)
+    if processed then return end
+    if input.KeyCode == CONFIG.TOGGLE_KEY then
+        if isOpen then closeMenu() else openMenu() end
+    end
+end)
+
+-- Slider de volumen (mouse y dedo)
+local draggingSlider = false
+local function updateSlider(x)
+    setVolume((x - sliderBack.AbsolutePosition.X) / sliderBack.AbsoluteSize.X)
+end
+sliderHit.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = true
+        updateSlider(input.Position.X)
+    end
+end)
+
+-- Mover la ventana desde la parte de arriba del panel
+local draggingWindow, dragStart, startPos = false, nil, nil
+dragArea.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        draggingWindow = true
+        dragStart = input.Position
+        startPos = main.Position
+    end
+end)
+
+connect(UserInputService.InputChanged, function(input)
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch then
+        return
+    end
+    if draggingSlider then
+        updateSlider(input.Position.X)
+    elseif draggingWindow then
+        local d = input.Position - dragStart
+        main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + d.X,
+            startPos.Y.Scale, startPos.Y.Offset + d.Y
+        )
+    end
+end)
+
+connect(UserInputService.InputEnded, function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        draggingSlider = false
+        draggingWindow = false
+    end
+end)
+
+-- ================= ¡ARRANCAR! =================
+startLoading() -- empieza a descargar ya (música primero)
+openMenu()     -- abre el menú al ejecutar
