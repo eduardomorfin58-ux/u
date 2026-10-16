@@ -11242,9 +11242,12 @@ task.spawn(function()
     local CONFIG_URL = "https://raw.githubusercontent.com/eduardomorfin58-ux/Ree/main/GOY_RemoteSpr/ia_config.json"
     local CONFIG_LOCAL = "GOY_IA_config.json"   -- si existe en tu ejecutor, manda sobre el de GitHub
     local DEFAULT_AI_URL = "https://text.pollinations.ai/openai"  -- IA pública sin clave (respaldo)
-    local AI_SYSTEM = "Eres la IA de GOY dentro de Roblox. Respondes en español, corto y claro. "
-        .. "Ayudas con Luau: explicar señales recibidas del servidor, revisar y corregir Scripts del servidor del propio usuario "
-        .. "(validar tipos, rangos, cooldown y dueño). Cuando corrijas código devuelve el código completo."
+    local AI_SYSTEM = "Eres la IA de GOY, un asistente experto en Roblox Luau, dentro de un panel de chat. "
+        .. "Responde siempre en español, claro y directo, como un buen compañero programador: primero la respuesta, luego lo necesario. "
+        .. "Puedes conversar, responder preguntas, explicar señales que el servidor envió al jugador, y revisar, corregir o escribir código que el usuario te pida. "
+        .. "Cuando des código, ponlo completo dentro de un solo bloque ```lua ... ``` sin partes omitidas, y después explica en 1 a 3 líneas qué cambiaste. "
+        .. "En Scripts del servidor del propio usuario añade validaciones de tipos, rangos, cooldown y dueño. "
+        .. "Usa **negrita** solo para lo importante. Si algo no está claro, pregunta una sola cosa."
     --------------------------------------
 
     local C = {
@@ -12100,18 +12103,55 @@ task.spawn(function()
     local fixBtn = button("Corregir código", right, UDim2.new(0, 130, 0, 26), UDim2.new(0, 96, 1, -54), C.ok)
     local copyFixBtn = button("Copiar", right, UDim2.new(0, 84, 0, 26), UDim2.new(0, 232, 1, -54), C.btnOn)
 
-    ---------------- IA mini panel ----------------
+    ---------------- IA panel (chat con burbujas, "pensando…", código copiable) ----------------
+    local IAC = {
+        bg = Color3.fromRGB(14, 20, 34), head1 = Color3.fromRGB(60, 70, 190), head2 = Color3.fromRGB(30, 130, 200),
+        me = Color3.fromRGB(46, 104, 200), ai = Color3.fromRGB(30, 40, 62), code = Color3.fromRGB(10, 14, 24),
+        chip = Color3.fromRGB(36, 50, 78), input = Color3.fromRGB(22, 30, 48), send = Color3.fromRGB(70, 140, 240),
+        online = Color3.fromRGB(80, 220, 130), offline = Color3.fromRGB(230, 90, 110), dim = Color3.fromRGB(140, 156, 182),
+    }
+    local IA_W, IA_H = 380, 470
     local iaGui = new("ScreenGui", {Name = "GOY_IA_Panel", ResetOnSpawn = false, IgnoreGuiInset = true,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 61, Enabled = false}, guiParent)
-    local iaWin = new("Frame", {Size = UDim2.fromOffset(320, 300), Position = UDim2.fromScale(0.72, 0.4),
-        AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = C.bg, BorderSizePixel = 0}, iaGui)
-    round(iaWin, 12); stroke(iaWin, C.stroke, 2)
-    new("UIScale", {Scale = scale.Scale}, iaWin)
-    local iaBar = new("Frame", {Size = UDim2.new(1, 0, 0, 32), BackgroundTransparency = 1}, iaWin)
-    new("TextLabel", {Text = "IA GOY", Size = UDim2.new(1, -70, 1, 0), Position = UDim2.fromOffset(12, 0),
-        BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.GothamBold, TextSize = 15,
+    local iaWin = new("Frame", {Size = UDim2.fromOffset(IA_W, IA_H), Position = UDim2.fromScale(0.72, 0.45),
+        AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = IAC.bg, BorderSizePixel = 0, ClipsDescendants = true}, iaGui)
+    round(iaWin, 16); stroke(iaWin, Color3.fromRGB(90, 120, 230), 2)
+    local iaScale = new("UIScale", {Scale = 1}, iaWin)
+    local function fitIA()
+        local cam = workspace.CurrentCamera
+        local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+        iaScale.Scale = math.clamp(math.min(vp.X * 0.62 / IA_W, vp.Y * 0.86 / IA_H), 0.55, 1.2)
+    end
+    fitIA()
+    if workspace.CurrentCamera then workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fitIA) end
+
+    -- Cabecera con degradado
+    local iaBar = new("Frame", {Size = UDim2.new(1, 0, 0, 50), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0}, iaWin)
+    new("UIGradient", {Rotation = 0, Color = ColorSequence.new(IAC.head1, IAC.head2)}, iaBar)
+    local avatar = new("TextLabel", {Text = "IA", Size = UDim2.fromOffset(32, 32), Position = UDim2.fromOffset(10, 9),
+        BackgroundColor3 = Color3.fromRGB(255, 255, 255), BackgroundTransparency = 0.8, TextColor3 = Color3.new(1, 1, 1),
+        Font = Enum.Font.GothamBlack, TextSize = 14, BorderSizePixel = 0}, iaBar)
+    round(avatar, 16)
+    new("TextLabel", {Text = "IA GOY", Size = UDim2.new(1, -170, 0, 20), Position = UDim2.fromOffset(50, 7),
+        BackgroundTransparency = 1, TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 16,
         TextXAlignment = Enum.TextXAlignment.Left}, iaBar)
-    local iaClose = button("X", iaBar, UDim2.fromOffset(26, 22), UDim2.new(1, -32, 0, 5))
+    local statusDot = new("Frame", {Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(51, 32),
+        BackgroundColor3 = IAC.dim, BorderSizePixel = 0}, iaBar)
+    round(statusDot, 4)
+    local statusText = new("TextLabel", {Text = "Conectando…", Size = UDim2.new(1, -180, 0, 14), Position = UDim2.fromOffset(64, 29),
+        BackgroundTransparency = 1, TextColor3 = Color3.fromRGB(225, 232, 255), Font = Enum.Font.Gotham, TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd}, iaBar)
+    local function headBtn(text, x)
+        local b = new("TextButton", {Text = text, Size = UDim2.fromOffset(30, 26), Position = UDim2.new(1, x, 0, 12),
+            BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.82, TextColor3 = Color3.new(1, 1, 1),
+            Font = Enum.Font.GothamBold, TextSize = 13, BorderSizePixel = 0, AutoButtonColor = true}, iaBar)
+        round(b, 8)
+        return b
+    end
+    local iaClear = headBtn("Lim", -104)
+    local iaMin = headBtn("-", -70)
+    local iaClose = headBtn("X", -36)
+    iaClear.Size = UDim2.fromOffset(32, 26)
     do
         local UIS = game:GetService("UserInputService")
         local dragging, startPos, startInput
@@ -12122,7 +12162,7 @@ task.spawn(function()
         end)
         UIS.InputChanged:Connect(function(i)
             if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-                local d = i.Position - startInput
+                local d = (i.Position - startInput) / iaScale.Scale
                 iaWin.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
             end
         end)
@@ -12130,54 +12170,262 @@ task.spawn(function()
             if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
         end)
     end
-    local iaLog = new("ScrollingFrame", {Size = UDim2.new(1, -16, 1, -84), Position = UDim2.fromOffset(8, 36),
-        BackgroundColor3 = C.panel, BorderSizePixel = 0, ScrollBarThickness = 4, CanvasSize = UDim2.new(),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y}, iaWin)
-    round(iaLog, 8)
-    local iaText = new("TextLabel", {Text = "", RichText = true, AutomaticSize = Enum.AutomaticSize.Y,
-        Size = UDim2.new(1, -12, 0, 0), Position = UDim2.fromOffset(6, 4), BackgroundTransparency = 1,
-        TextColor3 = C.text, Font = Enum.Font.Gotham, TextSize = 13, TextWrapped = true,
-        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top}, iaLog)
-    local iaInput = new("TextBox", {PlaceholderText = "Escribe o pega código…", Text = "", ClearTextOnFocus = false,
-        Size = UDim2.new(1, -16, 0, 26), Position = UDim2.new(0, 8, 1, -42), BackgroundColor3 = C.panel,
-        TextColor3 = C.text, PlaceholderColor3 = C.dim, Font = Enum.Font.Gotham, TextSize = 13, BorderSizePixel = 0}, iaWin)
-    round(iaInput, 8)
-    local iaSend = button("Enviar", iaWin, UDim2.new(0, 62, 0, 24), UDim2.new(0, 8, 1, -14))
-    local iaFix = button("Corregir código", iaWin, UDim2.new(0, 110, 0, 24), UDim2.new(0, 74, 1, -14), C.ok)
-    local iaSignal = button("Señal", iaWin, UDim2.new(0, 56, 0, 24), UDim2.new(0, 188, 1, -14), C.btnOn)
-    local iaCopy = button("Copiar", iaWin, UDim2.new(0, 60, 0, 24), UDim2.new(0, 250, 1, -14))
+
+    local iaBody = new("Frame", {Size = UDim2.new(1, 0, 1, -50), Position = UDim2.fromOffset(0, 50), BackgroundTransparency = 1}, iaWin)
+    -- Conversación
+    local iaLog = new("ScrollingFrame", {Size = UDim2.new(1, -16, 1, -150), Position = UDim2.fromOffset(8, 8),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4, ScrollBarImageColor3 = IAC.dim,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y}, iaBody)
+    new("UIListLayout", {Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder}, iaLog)
+    new("UIPadding", {PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6)}, iaLog)
+
+    -- "Pensando…" (aparece abajo mientras la IA trabaja)
+    local thinking = new("Frame", {Size = UDim2.new(1, -16, 0, 20), Position = UDim2.new(0, 8, 1, -140),
+        BackgroundTransparency = 1, Visible = false}, iaBody)
+    local thinkDots = {}
+    for i = 1, 3 do
+        local d = new("Frame", {Size = UDim2.fromOffset(6, 6), Position = UDim2.fromOffset(4 + (i - 1) * 10, 7),
+            BackgroundColor3 = IAC.send, BorderSizePixel = 0}, thinking)
+        round(d, 3)
+        thinkDots[i] = d
+    end
+    local thinkText = new("TextLabel", {Text = "IA pensando…", Size = UDim2.new(1, -40, 1, 0), Position = UDim2.fromOffset(38, 0),
+        BackgroundTransparency = 1, TextColor3 = IAC.dim, Font = Enum.Font.GothamMedium, TextSize = 11,
+        TextXAlignment = Enum.TextXAlignment.Left}, thinking)
+
+    -- Atajos
+    local chips = new("Frame", {Size = UDim2.new(1, -16, 0, 26), Position = UDim2.new(0, 8, 1, -116), BackgroundTransparency = 1}, iaBody)
+    new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, chips)
+    local function chip(text, order, w)
+        local b = new("TextButton", {Text = text, Size = UDim2.fromOffset(w, 26), BackgroundColor3 = IAC.chip, TextColor3 = C.text,
+            Font = Enum.Font.GothamMedium, TextSize = 12, BorderSizePixel = 0, AutoButtonColor = true, LayoutOrder = order}, chips)
+        round(b, 13); stroke(b, Color3.fromRGB(70, 100, 160), 1)
+        return b
+    end
+    local iaFix = chip("Corregir código", 1, 118)
+    local iaSignal = chip("Explicar señal", 2, 110)
+    local iaCopy = chip("Copiar última", 3, 110)
+
+    -- Entrada
+    local inputBox = new("Frame", {Size = UDim2.new(1, -16, 0, 74), Position = UDim2.new(0, 8, 1, -82),
+        BackgroundColor3 = IAC.input, BorderSizePixel = 0}, iaBody)
+    round(inputBox, 12); stroke(inputBox, Color3.fromRGB(70, 100, 160), 1)
+    local iaInput = new("TextBox", {PlaceholderText = "Escribe un mensaje o pega tu código…", Text = "", ClearTextOnFocus = false,
+        MultiLine = true, TextWrapped = true, Size = UDim2.new(1, -84, 1, -12), Position = UDim2.fromOffset(10, 6),
+        BackgroundTransparency = 1, TextColor3 = C.text, PlaceholderColor3 = IAC.dim, Font = Enum.Font.Gotham, TextSize = 13,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top}, inputBox)
+    local iaSend = new("TextButton", {Text = "Enviar", Size = UDim2.fromOffset(64, 36), Position = UDim2.new(1, -70, 1, -42),
+        BackgroundColor3 = IAC.send, TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 13,
+        BorderSizePixel = 0, AutoButtonColor = true}, inputBox)
+    round(iaSend, 10)
+
+    ---- Burbujas ----
+    local msgOrder = 0
     local iaLastReply = ""
+    local function scrollDown()
+        task.spawn(function()
+            task.wait()
+            pcall(function() iaLog.CanvasPosition = Vector2.new(0, 1e6) end)
+        end)
+    end
+    local function md(text) -- **negrita** y `código` simple
+        local t = esc(text)
+        t = t:gsub("%*%*(.-)%*%*", "<b>%1</b>")
+        t = t:gsub("`([^`\n]+)`", '<font face="RobotoMono" color="#9ece6a">%1</font>')
+        return t
+    end
+    -- Separa la respuesta en texto y bloques ``` de código.
+    local function splitReply(reply)
+        local parts, pos = {}, 1
+        while true do
+            local s1, e1, lang = reply:find("```([%w_%+%-]*)[^\n]*\n?", pos)
+            if not s1 then break end
+            local s2, e2 = reply:find("```", e1 + 1, true)
+            if s1 > pos then parts[#parts + 1] = {kind = "text", body = reply:sub(pos, s1 - 1)} end
+            parts[#parts + 1] = {kind = "code", body = reply:sub(e1 + 1, (s2 or #reply + 1) - 1):gsub("\n$", "")}
+            if not s2 then pos = #reply + 1; break end
+            pos = e2 + 1
+        end
+        if pos <= #reply then parts[#parts + 1] = {kind = "text", body = reply:sub(pos)} end
+        for i = #parts, 1, -1 do
+            parts[i].body = parts[i].body:gsub("^%s+", ""):gsub("%s+$", "")
+            if parts[i].body == "" then table.remove(parts, i) end
+        end
+        return parts
+    end
+    local function typewrite(label)
+        -- Animación de escritura (revela el texto poco a poco).
+        task.spawn(function()
+            local ok = pcall(function() label.MaxVisibleGraphemes = 0 end)
+            if not ok then return end
+            local plain = label.ContentText; if type(plain) ~= "string" or plain == "" then plain = label.Text:gsub("<[^>]->", "") end
+            local total = utf8 and utf8.len(plain) or #plain
+            local step = math.max(4, math.floor(total / 60))
+            local shown = 0
+            while shown < total and label.Parent do
+                shown = shown + step
+                label.MaxVisibleGraphemes = shown
+                task.wait(0.02)
+            end
+            pcall(function() label.MaxVisibleGraphemes = -1 end)
+            scrollDown()
+        end)
+    end
+    local function addRow()
+        msgOrder = msgOrder + 1
+        return new("Frame", {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            BackgroundTransparency = 1, LayoutOrder = msgOrder}, iaLog)
+    end
+    local function bubble(row, fromMe, color)
+        local b = new("Frame", {Size = UDim2.new(0.86, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+            Position = fromMe and UDim2.new(0.14, 0, 0, 0) or UDim2.new(0, 0, 0, 0),
+            BackgroundColor3 = color, BorderSizePixel = 0}, row)
+        round(b, 12)
+        new("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10)}, b)
+        new("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, b)
+        return b
+    end
+    local function textIn(parent, rich, order, color)
+        return new("TextLabel", {Text = rich, RichText = true, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, TextColor3 = color or C.text, Font = Enum.Font.Gotham,
+            TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = order}, parent)
+    end
+    local function codeIn(parent, code, order)
+        local box = new("Frame", {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = IAC.code,
+            BorderSizePixel = 0, LayoutOrder = order}, parent)
+        round(box, 8)
+        new("UIPadding", {PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8)}, box)
+        new("UIListLayout", {Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder}, box)
+        local top = new("Frame", {Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, LayoutOrder = 1}, box)
+        new("TextLabel", {Text = "lua", Size = UDim2.new(1, -90, 1, 0), BackgroundTransparency = 1, TextColor3 = IAC.dim,
+            Font = Enum.Font.GothamMedium, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left}, top)
+        local cp = new("TextButton", {Text = "Copiar código", Size = UDim2.fromOffset(88, 20), Position = UDim2.new(1, -88, 0, 1),
+            BackgroundColor3 = IAC.chip, TextColor3 = C.text, Font = Enum.Font.GothamMedium, TextSize = 11, BorderSizePixel = 0}, top)
+        round(cp, 6)
+        cp.MouseButton1Click:Connect(function() copy(code, "Código") ; cp.Text = "Copiado" ; task.delay(1.5, function() cp.Text = "Copiar código" end) end)
+        local lbl = new("TextLabel", {Text = colorize(code), RichText = true, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y,
+            Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12,
+            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2}, box)
+        return lbl
+    end
+    local function addMine(text)
+        local row = addRow()
+        local b = bubble(row, true, IAC.me)
+        if #text > 600 or text:find("\n.*\n.*\n") then
+            textIn(b, "<i>Código enviado (" .. #text .. " car.)</i>", 1)
+            codeIn(b, #text > 1500 and (text:sub(1, 1500) .. "\n-- …") or text, 2)
+        else
+            textIn(b, md(text), 1, Color3.new(1, 1, 1))
+        end
+        scrollDown()
+    end
+    local function addAI(reply, isError)
+        local row = addRow()
+        local b = bubble(row, false, isError and Color3.fromRGB(70, 30, 46) or IAC.ai)
+        local order = 0
+        for _, part in ipairs(splitReply(reply)) do
+            order = order + 1
+            local lbl = part.kind == "code" and codeIn(b, part.body, order) or textIn(b, md(part.body), order)
+            typewrite(lbl)
+        end
+        scrollDown()
+    end
+
+    ---- Estado / conexión ----
+    local function refreshStatus()
+        if not state.config then loadConfig() end
+        if state.config then
+            statusDot.BackgroundColor3 = IAC.online
+            statusText.Text = (state.config.aiUrl == DEFAULT_AI_URL) and "En línea · IA pública" or ("En línea · " .. (state.config.displayName or "tu worker"))
+        else
+            statusDot.BackgroundColor3 = IAC.offline
+            statusText.Text = "Sin conexión · " .. tostring(state.configErr)
+        end
+    end
+
+    local busy = false
+    local function iaRun(kind, text)
+        if busy or text == "" then return end
+        busy = true
+        addMine(text)
+        thinking.Visible = true
+        iaSend.Text = "…"
+        iaSend.BackgroundColor3 = IAC.chip
+        local started = os.clock()
+        -- animación de los puntos + segundos
+        task.spawn(function()
+            local t = 0
+            while busy do
+                t = t + 1
+                for i, d in ipairs(thinkDots) do
+                    d.BackgroundTransparency = ((t + i) % 3 == 0) and 0 or 0.65
+                    d.Position = UDim2.fromOffset(4 + (i - 1) * 10, ((t + i) % 3 == 0) and 4 or 7)
+                end
+                local secs = math.floor(os.clock() - started)
+                local verb = kind == "fix_code" and "corrigiendo el código" or (kind == "analyze_signal" and "analizando la señal" or "pensando")
+                thinkText.Text = ("IA %s… %ds"):format(verb, secs)
+                task.wait(0.25)
+            end
+        end)
+        task.spawn(function()
+            local reply, err = askAI(kind, text)
+            busy = false
+            thinking.Visible = false
+            iaSend.Text = "Enviar"
+            iaSend.BackgroundColor3 = IAC.send
+            if reply then
+                iaLastReply = reply
+                addAI(reply, false)
+                statusDot.BackgroundColor3 = IAC.online
+            else
+                addAI("No pude responder: " .. tostring(err), true)
+                statusDot.BackgroundColor3 = IAC.offline
+            end
+        end)
+    end
+    local function sendFromBox(kind)
+        local t = iaInput.Text
+        if t:gsub("%s", "") == "" then return end
+        iaInput.Text = ""
+        iaRun(kind, t)
+    end
+    iaSend.MouseButton1Click:Connect(function() sendFromBox("chat") end)
+    iaInput.FocusLost:Connect(function(enter) if enter and not iaInput.MultiLine then sendFromBox("chat") end end)
+    iaFix.MouseButton1Click:Connect(function()
+        if iaInput.Text:gsub("%s", "") == "" then addAI("Pega tu código en la caja y toca **Corregir código**.", false) return end
+        sendFromBox("fix_code")
+    end)
+    iaSignal.MouseButton1Click:Connect(function()
+        local g = state.selectedKey and state.groups[state.selectedKey]
+        if g then iaRun("analyze_signal", codeOf(g)) else addAI("Selecciona una señal en el Remote Spy y vuelve a tocar **Explicar señal**.", false) end
+    end)
     iaCopy.MouseButton1Click:Connect(function()
         if iaLastReply ~= "" then copy(iaLastReply, "Respuesta IA") else notify("GOY\nAún no hay respuesta") end
     end)
-    local iaHistory = {}
-    local function iaAppend(who, msg, color)
-        iaHistory[#iaHistory + 1] = ('<font color="#%s"><b>%s:</b></font> %s'):format(color or "9aa6ba", who, esc(msg))
-        iaText.Text = table.concat(iaHistory, "\n\n")
-    end
-    local function iaRun(kind, text)
-        if text == "" then return end
-        iaAppend("Tú", text, "7aa2f7")
-        task.spawn(function()
-            local reply, err = askAI(kind, text)
-            if reply then iaLastReply = reply; iaAppend("IA", reply, "9ece6a") else iaAppend("IA", "Error: " .. tostring(err), "e06c9b") end
-        end)
-    end
-    iaSend.MouseButton1Click:Connect(function() local t = iaInput.Text; iaInput.Text = ""; iaRun("chat", t) end)
-    iaFix.MouseButton1Click:Connect(function() local t = iaInput.Text; iaInput.Text = ""; iaRun("fix_code", t) end)
-    iaSignal.MouseButton1Click:Connect(function()
-        local g = state.selectedKey and state.groups[state.selectedKey]
-        if g then iaRun("analyze_signal", codeOf(g)) else iaAppend("IA", "Selecciona una señal en Remote Spy primero.", "e06c9b") end
+    iaClear.MouseButton1Click:Connect(function()
+        for _, c in ipairs(iaLog:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
+        aiMemory = {}
+        iaLastReply = ""
+        addAI("Chat limpio. ¿En qué te ayudo?", false)
+    end)
+    local iaMinimized = false
+    iaMin.MouseButton1Click:Connect(function()
+        iaMinimized = not iaMinimized
+        iaBody.Visible = not iaMinimized
+        iaWin.Size = iaMinimized and UDim2.fromOffset(IA_W, 50) or UDim2.fromOffset(IA_W, IA_H)
     end)
     iaClose.MouseButton1Click:Connect(function() iaGui.Enabled = false end)
-    iaBtn.MouseButton1Click:Connect(function()
-        iaGui.Enabled = not iaGui.Enabled
-        if iaGui.Enabled and #iaHistory == 0 then
-            loadConfig()
-            iaAppend("IA", state.config and ((state.config.aiUrl == DEFAULT_AI_URL) and "Conectada (IA pública gratis). Escríbeme." or ("Conectada a tu worker. " .. (state.config.displayName or ""))) or ("Sin conexión: " .. tostring(state.configErr)), "9ece6a")
+    local greeted = false
+    local function openIA()
+        iaGui.Enabled = true
+        if not greeted then
+            greeted = true
+            refreshStatus()
+            addAI("Hola, soy la IA de GOY. Escríbeme lo que necesites, pega tu código para **corregirlo**, o selecciona una señal y toca **Explicar señal**.", false)
         end
-    end)
-    SHARED.openIA = function() iaGui.Enabled = true end
+    end
+    iaBtn.MouseButton1Click:Connect(function() if iaGui.Enabled then iaGui.Enabled = false else openIA() end end)
+    SHARED.openIA = openIA
 
     ---------------- Render ----------------
     local visibleKeys, rowPool, currentRows = {}, {}, {}
