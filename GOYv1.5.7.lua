@@ -11203,6 +11203,8 @@ end)
 -- =====================================================================
 -- =====================================================================
 -- GOY | REMOTE SPY v1.5.7 (solo lectura) + REGISTRO POR BOTÓN + SERVIDOR + IA
+-- v1.5.7.9: respuestas y códigos largos (hasta 10,000 líneas, por partes), botón Leer script, más contexto para la IA.
+-- v1.5.7.8: analizador/corrector del servidor con registro del proceso y más arreglos; la IA responde Proceso/Fallos/Código/Cambios.
 -- Se abre desde la pestaña "Premium Info" del menú. NO toca botones, funciones
 -- ni animaciones del menú: solo agrega su propia ventana.
 --
@@ -11247,10 +11249,12 @@ task.spawn(function()
         .. "Responde siempre en español, claro y directo, como un buen compañero programador: primero la respuesta, luego lo necesario. "
         .. "Puedes conversar, responder preguntas, explicar señales que el servidor envió al jugador, y revisar, corregir o escribir código que el usuario te pida. "
         .. "Cuando des código, ponlo completo dentro de un solo bloque ```lua ... ``` sin partes omitidas, y después explica en 1 a 3 líneas qué cambiaste. "
-        .. "En Scripts del servidor del propio usuario añade validaciones de tipos, rangos, cooldown y dueño. "
+        .. "En Scripts del servidor del propio usuario añade validaciones de tipos, rangos, dueño, cooldown (que se guarde de verdad), Humanoid vivo y limpieza en PlayerRemoving. "
         .. "Reglas para que el código funcione a la primera: usa Luau moderno de Roblox (task.wait/task.spawn, game:GetService, :WaitForChild para lo que tarda en cargar), "
         .. "nada de funciones obsoletas (wait, spawn, delay), protege con pcall lo que puede fallar, revisa que cada function/if/for cierre con end, "
         .. "di dónde va (LocalScript, Script o ModuleScript y en qué carpeta), y no inventes nombres del juego: si no los sabes, ponlos como variables arriba para que el usuario los cambie. "
+        .. "Puedes escribir respuestas y códigos largos (hasta 10,000 líneas). Si no te cabe, detente al final de una línea completa: el panel te pedirá que continúes y unirá las partes. "
+        .. "Cuando el usuario te pase un script, léelo entero: di para qué sirve cada parte (servicios, remotos, funciones, botones del menú), qué partes se parecen o hacen lo mismo, y usa esos mismos nombres y estilo al escribir código nuevo. "
         .. "Usa **negrita** solo para lo importante. Si algo no está claro, pregunta una sola cosa."
     --------------------------------------
 
@@ -11763,7 +11767,17 @@ task.spawn(function()
     ---------------- Analizador de código del SERVIDOR (estático, de texto) ----------------
     -- Revisa un Script del servidor y dice qué validaciones tiene y cuáles faltan.
     local function analyzeServer(src)
-        if src == "" then return "Pega el código de un Script del servidor y toca Analizar." end
+        if src == "" then return "Pega el código de un Script del servidor y toca Analizar.", nil end
+        -- Devuelve (reporte, hallazgos). fixServer reutiliza los hallazgos para aplicar los arreglos.
+        local proc, oks, miss = {}, {}, {}
+        local info = {deadCool = {}, coolKey = {}, perPlayer = {}, uncleaned = {}, keyKind = {}, humVars = {}, selfPairs = {}}
+        local function step(msg) proc[#proc + 1] = ("  %d. %s"):format(#proc + 1, msg) end
+        local _, nl = src:gsub("\n", "\n")
+        step(("Leí el código: %d líneas."):format(nl + 1))
+        -- Se analiza sin comentarios, para no dar por hecho algo que solo está escrito en un comentario.
+        src = src:gsub("%-%-%[(=*)%[.-%]%1%]", ""):gsub("%-%-[^\n]*", "")
+
+        -- 1) validaciones generales
         local checks = {
             {k = "tipo (typeof/type)", has = src:find("typeof%s*%(") or src:find("type%s*%(")},
             {k = "rango (<, >, math.clamp, min/max)", has = src:find("math%.clamp") or src:find("math%.min") or src:find("math%.max") or src:find("[<>]=?")},
@@ -11772,41 +11786,120 @@ task.spawn(function()
             {k = "distancia (magnitude)", has = src:find("%.[Mm]agnitude")},
             {k = "sanitiza strings (#.. len, string.sub)", has = src:find("#%w") or src:find("string%.sub") or src:find("utf8")},
         }
-        local out = {"-- Análisis estático (de texto) del Script del servidor", ""}
-        local falta = {}
-        out[#out + 1] = "Qué SÍ valida:"
-        local anySi = false
-        for _, c in ipairs(checks) do if c.has then out[#out + 1] = "  [OK] " .. c.k; anySi = true end end
-        if not anySi then out[#out + 1] = "  (nada detectado)" end
-        out[#out + 1] = ""
-        out[#out + 1] = "Qué NO valida (riesgo de exploit):"
-        for _, c in ipairs(checks) do if not c.has then out[#out + 1] = "  [FALTA] " .. c.k; falta[#falta + 1] = c.k end end
-        if #falta == 0 then out[#out + 1] = "  (todo cubierto a nivel de texto)" end
-        -- Remotos que atiende el servidor.
-        local remotes = {}
-        for ev in src:gmatch("OnServerEvent") do remotes[#remotes + 1] = ev end
-        for ev in src:gmatch("OnServerInvoke") do remotes[#remotes + 1] = ev end
-        out[#out + 1] = ""
-        out[#out + 1] = ("Manejadores de remoto encontrados: %d (OnServerEvent/OnServerInvoke)"):format(#remotes)
+        local nOk = 0
+        for _, c in ipairs(checks) do
+            if c.has then oks[#oks + 1] = "  [OK] " .. c.k; nOk = nOk + 1
+            else miss[#miss + 1] = "  [FALTA] " .. c.k end
+        end
+        step(("Revisé %d validaciones básicas: %d presentes, %d faltan."):format(#checks, nOk, #checks - nOk))
+
+        -- 2) cooldown que se lee pero nunca se guarda (entonces no limita nada)
+        local coolNames = {}
+        for name, key in src:gmatch("([%w_]+)%[([^%]\n]+)%]%s*or%s*0") do
+            if not info.coolKey[name] then info.coolKey[name] = key; coolNames[#coolNames + 1] = name end
+        end
+        for _, name in ipairs(coolNames) do
+            if src:find(name .. "%[[^%]\n]+%]%s*=[^=]") then
+                oks[#oks + 1] = ("  [OK] %s se lee y se guarda (el cooldown funciona)"):format(name)
+            else
+                info.deadCool[#info.deadCool + 1] = name
+                miss[#miss + 1] = ("  [FALTA] %s se lee pero nunca se guarda: el cooldown NO funciona"):format(name)
+            end
+        end
+        step(("Busqué cooldowns con la forma tabla[clave] or 0: %d encontrado(s), %d sin guardar nunca."):format(#coolNames, #info.deadCool))
+
+        -- 3) tablas por jugador y limpieza al salir
+        for name in src:gmatch("([%w_]+)%[[%w_%.]-UserId%]") do
+            if not info.keyKind[name] then info.keyKind[name] = "UserId"; info.perPlayer[#info.perPlayer + 1] = name end
+        end
+        for _, name in ipairs(coolNames) do
+            if not info.keyKind[name] then
+                info.keyKind[name] = info.coolKey[name]:match("^%s*[%w_]+%s*$") and "Instance" or "Other"
+                info.perPlayer[#info.perPlayer + 1] = name
+            end
+        end
+        for _, name in ipairs(info.perPlayer) do
+            if not src:find(name .. "%[[^%]\n]+%]%s*=%s*nil") then info.uncleaned[#info.uncleaned + 1] = name end
+        end
+        step(("Busqué tablas por jugador: %d. Sin limpiar al salir el jugador: %d."):format(#info.perPlayer, #info.uncleaned))
+        if #info.perPlayer > 0 then
+            if #info.uncleaned == 0 then
+                oks[#oks + 1] = "  [OK] borra los datos del jugador al salir (PlayerRemoving)"
+            else
+                miss[#miss + 1] = ("  [FALTA] no borra al salir el jugador (crecen sin límite): %s"):format(table.concat(info.uncleaned, ", "))
+            end
+        end
+
+        -- 4) Humanoid vivo
+        for v in src:gmatch("local%s+([%w_]+)%s*=%s*[^\n]-[\"']Humanoid[\"']") do info.humVars[#info.humVars + 1] = v end
+        info.usesHum = #info.humVars > 0 or src:find("[\"']Humanoid[\"']") ~= nil
+        info.checksHealth = src:find("%.Health") ~= nil
+        step(("Busqué Humanoid y si se comprueba que esté vivo: %s."):format(not info.usesHum and "no usa Humanoid" or (info.checksHealth and "sí lo comprueba" or "NO lo comprueba")))
+        if info.usesHum then
+            if info.checksHealth then oks[#oks + 1] = "  [OK] comprueba Health del Humanoid"
+            else miss[#miss + 1] = "  [FALTA] no comprueba que el Humanoid esté vivo (Health > 0)" end
+        end
+
+        -- 5) dos jugadores en la misma función: ¿impide que sean el mismo?
+        local function pairCheck(fname, params)
+            local list = {}
+            for p in params:gmatch("[%w_]+") do list[#list + 1] = p end
+            for i = 1, #list - 1 do
+                for j = i + 1, #list do
+                    local a, b = list[i], list[j]
+                    if src:find(a .. "%.Character") and src:find(b .. "%.Character")
+                        and not src:find(a .. "%s*[=~]=%s*" .. b) and not src:find(b .. "%s*[=~]=%s*" .. a) then
+                        info.selfPairs[#info.selfPairs + 1] = {fname = fname, a = a, b = b}
+                        miss[#miss + 1] = ("  [FALTA] %s(%s, %s): no impide que %s y %s sean el mismo jugador"):format(fname, a, b, a, b)
+                    end
+                end
+            end
+        end
+        for fname, params in src:gmatch("function%s+([%w_%.:]+)%s*%(([^%)]*)%)") do pairCheck(fname, params) end
+        for params in src:gmatch("function%s*%(([^%)]*)%)") do pairCheck("(manejador)", params) end
+        step(("Busqué funciones con dos jugadores y la comprobación a ~= b: %d sin comprobar."):format(#info.selfPairs))
+
+        -- 6) manejadores de remoto: tipo y rango de cada parámetro
+        local nHandlers = 0
+        for _ in src:gmatch("OnServer%a+") do nHandlers = nHandlers + 1 end
+        local handlerLines = {}
         for params in src:gmatch("OnServer%a+[^\n]-function%s*%(([^%)]*)%)") do
             local list = {}
             for p in params:gmatch("[%w_]+") do list[#list + 1] = p end
-            out[#out + 1] = "  Handler(" .. table.concat(list, ", ") .. "):"
+            handlerLines[#handlerLines + 1] = "  Handler(" .. table.concat(list, ", ") .. "):"
             for i = 2, #list do
                 local p = list[i]
                 local typed = src:find("typeof%s*%(%s*" .. p .. "%s*%)") or src:find("type%s*%(%s*" .. p .. "%s*%)")
                 local ranged = src:find(p .. "%s*[<>]") or src:find("[<>]=?%s*" .. p) or src:find("clamp%s*%(%s*" .. p)
-                out[#out + 1] = ("    %s %s: tipo %s, rango %s"):format(typed and ranged and "[OK]" or "[FALTA]", p, typed and "sí" or "NO", ranged and "sí" or "NO")
+                handlerLines[#handlerLines + 1] = ("    %s %s: tipo %s, rango %s"):format(typed and ranged and "[OK]" or "[FALTA]", p, typed and "sí" or "NO", ranged and "sí" or "NO")
             end
         end
+        step(("Revisé los manejadores de remoto (OnServerEvent/OnServerInvoke): %d."):format(nHandlers))
+
+        local out = {"-- Análisis estático (de texto) del Script del servidor", "", "Proceso (lo que hizo el análisis, paso a paso):"}
+        for _, l in ipairs(proc) do out[#out + 1] = l end
         out[#out + 1] = ""
-        out[#out + 1] = "Nota: es revisión de texto, no ejecuta el código. Usa 'Corregir código' para una versión con las validaciones faltantes."
-        return table.concat(out, "\n")
+        out[#out + 1] = "Qué SÍ valida:"
+        if #oks == 0 then out[#out + 1] = "  (nada detectado)" end
+        for _, l in ipairs(oks) do out[#out + 1] = l end
+        out[#out + 1] = ""
+        out[#out + 1] = "Qué NO valida (riesgo de exploit):"
+        if #miss == 0 then out[#out + 1] = "  (todo cubierto a nivel de texto)" end
+        for _, l in ipairs(miss) do out[#out + 1] = l end
+        out[#out + 1] = ""
+        out[#out + 1] = ("Manejadores de remoto encontrados: %d (OnServerEvent/OnServerInvoke)"):format(nHandlers)
+        for _, l in ipairs(handlerLines) do out[#out + 1] = l end
+        out[#out + 1] = ""
+        out[#out + 1] = "Nota: es revisión de texto, no ejecuta el código. Usa 'Corregir código' para una versión con los arreglos aplicados."
+        return table.concat(out, "\n"), info
     end
-    -- Devuelve el código con una cabecera de validaciones recomendadas insertada
-    -- dentro de cada handler de remoto. No borra tu lógica: la envuelve con guardas.
+    -- Devuelve el código con los arreglos aplicados y, arriba, la lista de lo que se hizo.
+    -- No borra tu lógica: añade guardas y líneas marcadas con [GOY].
     local function fixServer(src)
         if src == "" then return "" end
+        local _, info = analyzeServer(src)
+        local log = {}
+        local function note(s) log[#log + 1] = s end
         local function guardFor(params)
             local first = params:match("^%s*([%w_]+)") or "player"
             local extra = {}
@@ -11833,22 +11926,139 @@ task.spawn(function()
                 "",
             }, "\n")
         end
-        local fixed = src:gsub("(OnServerEvent:Connect%s*%(%s*function%s*%(([^%)]*)%))", function(head, params)
+        -- 1) guardas en cada manejador de remoto
+        local fixed, n1 = src:gsub("(OnServerEvent:Connect%s*%(%s*function%s*%(([^%)]*)%))", function(head, params)
             return head .. guardFor(params)
         end)
-        fixed = fixed:gsub("(OnServerInvoke%s*=%s*function%s*%(([^%)]*)%))", function(head, params)
+        local n2
+        fixed, n2 = fixed:gsub("(OnServerInvoke%s*=%s*function%s*%(([^%)]*)%))", function(head, params)
             return head .. guardFor(params)
         end)
-        local header = table.concat({
+        local nGuards = n1 + n2
+        if nGuards > 0 then note(("Añadí guardas (dueño, cooldown, tipos, rangos) en %d manejador(es) de remoto."):format(nGuards)) end
+
+        local lines = {}
+        for line in (fixed .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = line end
+        local function indentOf(l) return l:match("^[ \t]*") end
+
+        -- 2) cooldown que nunca se guardaba: se guarda cuando la validación pasa
+        for _, name in ipairs(info.deadCool) do
+            local done = false
+            for i = 1, #lines do
+                local key = lines[i]:match(name .. "%[([^%]]+)%]%s*or%s*0")
+                if key then
+                    local clock = "os.clock()"
+                    for j = i, math.min(#lines, i + 8) do
+                        if lines[j]:find("os%.clock") then clock = "os.clock()"; break end
+                        if lines[j]:find("tick%s*%(") then clock = "tick()"; break end
+                    end
+                    local pos, ind
+                    for j = i + 1, math.min(#lines, i + 80) do
+                        local l = lines[j]
+                        if l:find("function%s*[%w_%.:]*%s*%(") then break end
+                        if l:find("^%s*return%s+true%s*$") or l:find("^%s*return%s+true%s+%-%-") then pos = j; ind = indentOf(l); break end
+                    end
+                    if not pos then
+                        for j = i + 1, math.min(#lines, i + 8) do
+                            if lines[j]:find("^%s*if%s+.-<.-then%s+return") then pos = j + 1; ind = indentOf(lines[j]); break end
+                        end
+                    end
+                    if pos then
+                        table.insert(lines, pos, ind .. name .. "[" .. key .. "] = " .. clock .. " -- [GOY] guarda el cooldown (antes no se guardaba nunca)")
+                        done = true
+                    end
+                    break
+                end
+            end
+            if done then note(("Arreglé el cooldown de %s: ahora se guarda la hora cuando la validación pasa."):format(name))
+            else note(("%s: añade %s[clave] = os.clock() cuando la acción sea válida (no pude ubicar dónde)."):format(name, name)) end
+        end
+
+        -- 3) limpiar las tablas por jugador al salir
+        for _, name in ipairs(info.uncleaned) do
+            local kind = info.keyKind[name]
+            local done = false
+            if kind == "UserId" or kind == "Instance" then
+                for i = 1, #lines do
+                    if lines[i]:find("^%s*local%s+" .. name .. "%s*=%s*{%s*}") then
+                        local clear = (kind == "UserId") and (name .. "[p.UserId] = nil") or (name .. "[p] = nil")
+                        table.insert(lines, i + 1, indentOf(lines[i]) .. "game:GetService(\"Players\").PlayerRemoving:Connect(function(p) " .. clear .. " end) -- [GOY] limpia al salir el jugador")
+                        done = true
+                        break
+                    end
+                end
+            end
+            if done then note(("Añadí la limpieza de %s en PlayerRemoving."):format(name))
+            else note(("%s crece sin límite: borra su entrada del jugador en Players.PlayerRemoving."):format(name)) end
+        end
+
+        -- 4) comprobar que el Humanoid siga vivo
+        if info.usesHum and not info.checksHealth and #info.humVars > 0 then
+            local lastDecl = 0
+            for i = 1, #lines do
+                for _, v in ipairs(info.humVars) do
+                    if lines[i]:find("^%s*local%s+" .. v .. "%s*=") then lastDecl = i end
+                end
+            end
+            local done = false
+            for i = lastDecl + 1, math.min(#lines, lastDecl + 12) do
+                local cond, ret = lines[i]:match("^%s*if%s+not%s+(.-)%s+then%s+(return[^\n]-)%s+end")
+                if cond then
+                    local used = {}
+                    for _, v in ipairs(info.humVars) do
+                        if cond:find(v, 1, true) then used[#used + 1] = v .. ".Health <= 0" end
+                    end
+                    if #used > 0 then
+                        table.insert(lines, i + 1, indentOf(lines[i]) .. "if " .. table.concat(used, " or ") .. " then " .. ret .. " end -- [GOY] solo si siguen vivos")
+                        done = true
+                        break
+                    end
+                end
+            end
+            if done then note("Añadí la comprobación de que el Humanoid siga vivo (Health > 0).")
+            else note("Falta comprobar Humanoid.Health > 0 antes de actuar sobre un jugador.") end
+        end
+
+        -- 5) que el jugador no pueda actuar sobre sí mismo
+        for _, sp in ipairs(info.selfPairs) do
+            local done = false
+            for i = 1, #lines do
+                local params = lines[i]:match("function%s*[%w_%.:]*%s*%(([^%)]*)%)")
+                if params then
+                    local set = {}
+                    for p in params:gmatch("[%w_]+") do set[p] = true end
+                    if set[sp.a] and set[sp.b] then
+                        local ind = indentOf(lines[i])
+                        local boolFn = false
+                        for k = i + 1, math.min(#lines, i + 120) do
+                            if lines[k]:find("^%s*end") and #indentOf(lines[k]) <= #ind then break end
+                            if lines[k]:find("return%s+true") or lines[k]:find("return%s+false") then boolFn = true end
+                        end
+                        table.insert(lines, i + 1, ind .. "    if " .. sp.a .. " == " .. sp.b .. " then return" .. (boolFn and " false" or "") .. " end -- [GOY] no actuar sobre uno mismo (quítalo si lo permites)")
+                        done = true
+                        break
+                    end
+                end
+            end
+            if done then note(("Añadí en %s la comprobación %s ~= %s."):format(sp.fname, sp.a, sp.b))
+            else note(("%s: añade al inicio if %s == %s then return end."):format(sp.fname, sp.a, sp.b)) end
+        end
+
+        local header = {
             "-- ============================================",
-            "-- Código corregido por GOY: validaciones de seguridad añadidas.",
-            "-- Revisa los comentarios \"ajusta\" y pon los rangos de tu juego.",
-            "-- ============================================",
-            "local _GOY_cd = {}",
-            "game:GetService(\"Players\").PlayerRemoving:Connect(function(p) _GOY_cd[p] = nil end)",
-            "", "",
-        }, "\n")
-        return header .. fixed
+            "-- Código corregido por GOY. Arreglos aplicados:",
+        }
+        if #log == 0 then header[#header + 1] = "--   (no encontré nada que arreglar a nivel de texto)" end
+        for i, l in ipairs(log) do header[#header + 1] = ("--   %d. %s"):format(i, l) end
+        header[#header + 1] = "-- Revisa los comentarios [GOY] y pon los rangos de tu juego."
+        header[#header + 1] = "-- ============================================"
+        if nGuards > 0 then
+            header[#header + 1] = "local _GOY_cd = {}"
+            header[#header + 1] = "game:GetService(\"Players\").PlayerRemoving:Connect(function(p) _GOY_cd[p] = nil end)"
+        end
+        header[#header + 1] = ""
+        header[#header + 1] = ""
+        return table.concat(header, "\n") .. table.concat(lines, "\n")
     end
 
     ---------------- Config de la IA ----------------
@@ -11913,7 +12123,12 @@ task.spawn(function()
     end
     local aiMemory = {}
     local KIND_PREFIX = {
-        chat = "", fix_code = "Corrige este código y devuélvelo completo:\n",
+        chat = "",
+        continue = "Tu respuesta anterior se cortó por largo. Continúa EXACTAMENTE desde donde te quedaste, sin repetir nada, sin saludar y sin volver a abrir el bloque de código si ya estaba abierto. Esto es lo último que escribiste:\n",
+        fix_code = "Corrige este código y devuélvelo completo. Formato: **Proceso** (qué revisaste, en pasos cortos), "
+            .. "**Fallos** (lista numerada con la función y el motivo), el código completo en un solo bloque ```lua, y **Cambios** (1 línea por arreglo). "
+            .. "Revisa siempre: cooldown que no se guarda, tablas por jugador sin limpiar en PlayerRemoving, Humanoid sin Health > 0, "
+            .. "jugador que actúa sobre sí mismo, tipos/rangos sin validar, datos del cliente usados sin revisar y errores de sintaxis.\n",
         make_menu = "Crea un menú para Roblox que funcione a la primera, siguiendo esta base: LocalScript en StarterPlayerScripts, "
             .. "ScreenGui en PlayerGui con ResetOnSpawn=false, ventana con UICorner que se puede arrastrar (InputBegan/InputChanged), "
             .. "botón para abrir/cerrar, botones dentro de un ScrollingFrame con UIListLayout y AutomaticCanvasSize, cada botón con su función separada y pcall, "
@@ -11921,6 +12136,10 @@ task.spawn(function()
             .. "e incluye también el Script del servidor que los valida. Lo que quiere el usuario:\n",
         analyze_signal = "Explica qué significa esta señal que el servidor me envió:\n",
     }
+    local MAX_LINES = 10000          -- líneas máximas de una respuesta/código
+    local MAX_PARTS = 12             -- partes que puede pedir para terminar una respuesta larga
+    local CTX_MAX_WORKER = 200000    -- caracteres de contexto con tu worker
+    local CTX_MAX_PUBLIC = 40000     -- caracteres de contexto con la IA pública
     -- Contexto de TU juego para la IA: el código que pegaste en la pestaña Servidor,
     -- los remotos que ese código atiende y las señales que tu cliente ha recibido (solo nombres).
     local function gameContext()
@@ -11934,7 +12153,7 @@ task.spawn(function()
             for n in src:gmatch("WaitForChild%(%s*[\"']([^\"']+)[\"']") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
             for n in src:gmatch("Instance%.new%(%s*[\"']Remote%a+[\"']%s*[^\n]-\n[^\n]-%.Name%s*=%s*[\"']([^\"']+)") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
             if #names > 0 then parts[#parts + 1] = "Nombres usados en su código: " .. table.concat(names, ", ") end
-            local code = #src > 6000 and (src:sub(1, 6000) .. "\n-- (recortado)") or src
+            local code = #src > 60000 and (src:sub(1, 60000) .. "\n-- (recortado)") or src
             parts[#parts + 1] = "Código del juego del usuario (pegado por él en la pestaña Servidor). Úsalo para que lo que escribas encaje con sus nombres y remotos:\n```lua\n" .. code .. "\n```"
         end
         local seen = {}
@@ -11943,7 +12162,15 @@ task.spawn(function()
             if g and not g.custom then seen[#seen + 1] = ("%s (%s, %d args)"):format(g.path or g.name, g.class or "?", g.nargs or 0) end
         end
         if #seen > 0 then parts[#parts + 1] = "Señales que el servidor le ha enviado (solo referencia): " .. table.concat(seen, "; ") end
-        return table.concat(parts, "\n")
+        local ss = state.scriptSrc or ""
+        if ss ~= "" then
+            local _, n = ss:gsub("\n", "")
+            parts[#parts + 1] = ("Script que el usuario cargó con Leer script (%s, %d líneas). Léelo entero antes de responder:\n```lua\n%s\n```"):format(state.scriptName or "script", n + 1, ss)
+        end
+        local all = table.concat(parts, "\n")
+        local cap = (state.config and state.config.aiUrl == DEFAULT_AI_URL) and CTX_MAX_PUBLIC or CTX_MAX_WORKER
+        if #all > cap then all = all:sub(1, cap) .. "\n-- (recortado: el contexto era más largo)" end
+        return all
     end
     local function askAI(kind, text)
         if not state.config then loadConfig() end
@@ -11977,19 +12204,21 @@ task.spawn(function()
             end
         end
         if not body then return nil, err end
-        local reply
+        local reply, truncated = nil, false
         local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
         if ok and type(data) == "table" then
-            if data.reply then reply = tostring(data.reply)
+            if data.reply then reply = tostring(data.reply); truncated = data.truncated == true
             elseif type(data.choices) == "table" and data.choices[1] and data.choices[1].message then
                 reply = tostring(data.choices[1].message.content or "")
+                truncated = data.choices[1].finish_reason == "length"
             end
         end
         reply = reply or body
-        aiMemory[#aiMemory + 1] = {role = "user", content = text}
-        aiMemory[#aiMemory + 1] = {role = "assistant", content = reply}
+        local function cap(t) return #t > 8000 and (t:sub(1, 4000) .. "\n…\n" .. t:sub(-4000)) or t end
+        aiMemory[#aiMemory + 1] = {role = "user", content = cap(text)}
+        aiMemory[#aiMemory + 1] = {role = "assistant", content = cap(reply)}
         while #aiMemory > 8 do table.remove(aiMemory, 1) end
-        return reply
+        return reply, nil, truncated
     end
 
     ---------------- Reportes ----------------
@@ -12272,7 +12501,8 @@ task.spawn(function()
     end
     local iaFix = chip("Corregir código", 1, 118)
     local iaSignal = chip("Explicar señal", 2, 110)
-    local iaCopy = chip("Copiar última", 5, 104)
+    local iaCopy = chip("Copiar última", 6, 104)
+    local iaRead = chip("Leer script", 5, 92)
     local iaMenu = chip("Crear menú", 3, 96)
     local iaCtx = chip("Mi juego: ON", 4, 104)
     iaCtx.BackgroundColor3 = Color3.fromRGB(40, 110, 80)
@@ -12396,10 +12626,20 @@ task.spawn(function()
             badge.TextColor3 = compiles and Color3.fromRGB(110, 220, 140) or Color3.fromRGB(240, 110, 130)
             badge.TextTruncate = Enum.TextTruncate.AtEnd
         end
-        local lbl = new("TextLabel", {Text = colorize(code), RichText = true, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y,
-            Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2}, box)
-        return lbl
+        -- Código largo: se dibuja en trozos de 120 líneas (Roblox no dibuja textos gigantes en una sola etiqueta).
+        local lines = {}
+        for l in (code .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
+        if badge and #lines > 40 then badge.Text = badge.Text .. (" · %d líneas"):format(#lines) end
+        local first
+        for i = 1, #lines, 120 do
+            local chunk = table.concat(lines, "\n", i, math.min(i + 119, #lines))
+            local lbl = new("TextLabel", {Text = colorize(chunk), RichText = true, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y,
+                Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2 + i}, box)
+            first = first or lbl
+            if i % 1200 == 1 and i > 1 then task.wait() end
+        end
+        return first, #lines
     end
     local function addMine(text)
         local row = addRow()
@@ -12418,8 +12658,9 @@ task.spawn(function()
         local order = 0
         for _, part in ipairs(splitReply(reply)) do
             order = order + 1
-            local lbl = part.kind == "code" and codeIn(b, part.body, order) or textIn(b, md(part.body), order)
-            typewrite(lbl)
+            local lbl, n = nil, 0
+            if part.kind == "code" then lbl, n = codeIn(b, part.body, order) else lbl = textIn(b, md(part.body), order) end
+            if lbl and (n or 0) <= 150 then typewrite(lbl) end
         end
         scrollDown()
     end
@@ -12455,18 +12696,50 @@ task.spawn(function()
                     d.Position = UDim2.fromOffset(4 + (i - 1) * 10, ((t + i) % 3 == 0) and 4 or 7)
                 end
                 local secs = math.floor(os.clock() - started)
-                local verb = kind == "make_menu" and "creando el menú" or kind == "fix_code" and "corrigiendo el código" or (kind == "analyze_signal" and "analizando la señal" or "pensando")
+                local verb
+                if kind == "fix_code" then
+                    verb = secs < 2 and "leyendo tu código" or (secs < 6 and "buscando fallos" or "escribiendo la corrección")
+                elseif kind == "make_menu" then
+                    verb = secs < 3 and "planeando el menú" or "escribiendo el código del menú"
+                elseif kind == "analyze_signal" then
+                    verb = secs < 2 and "leyendo la señal" or "explicando la señal"
+                elseif kind == "continue" then
+                    verb = ("escribiendo la parte %d"):format(state.iaPart or 2)
+                elseif kind == "read_script" then
+                    verb = secs < 4 and "leyendo tu script" or "explicando para qué sirve cada parte"
+                else
+                    verb = "pensando"
+                end
                 thinkText.Text = ("IA %s… %ds"):format(verb, secs)
                 task.wait(0.25)
             end
         end)
         task.spawn(function()
-            local okA, reply, err = pcall(askAI, kind, text)
-            if not okA then reply, err = nil, "error interno: " .. tostring(reply) end
+            local okA, reply, err, truncated = pcall(askAI, kind, text)
+            if not okA then reply, err, truncated = nil, "error interno: " .. tostring(reply), false end
+            -- Respuesta larga: pide la siguiente parte hasta terminar (máx. MAX_PARTS partes / MAX_LINES líneas).
+            local function lineCount(t) local _, n = t:gsub("\n", ""); return n + 1 end
+            local function openFence(t) local _, n = t:gsub("```", ""); return n % 2 == 1 end
+            local part = 1
+            while reply and (truncated or openFence(reply)) and part < MAX_PARTS and lineCount(reply) < MAX_LINES do
+                part = part + 1
+                kind = "continue"; state.iaPart = part
+                local okC, more, _, tr = pcall(askAI, "continue", reply:sub(-3000))
+                if not okC or type(more) ~= "string" or more == "" then break end
+                if openFence(reply) then more = more:gsub("^%s*```[%w_]*%s*\n", "") end
+                reply = reply .. (reply:sub(-1) == "\n" and "" or "\n") .. more
+                truncated = tr
+            end
+            if reply and lineCount(reply) > MAX_LINES then
+                local cut, n = {}, 0
+                for l in (reply .. "\n"):gmatch("(.-)\n") do n = n + 1; if n > MAX_LINES then break end; cut[#cut + 1] = l end
+                reply = table.concat(cut, "\n") .. (openFence(table.concat(cut, "\n")) and "\n```" or "") .. "\n\n*(Se llegó al máximo de 10,000 líneas.)*"
+            end
             -- Si el código que dio no compila, se lo devuelve a la IA una vez para que lo arregle.
             if reply then
                 local broken, cerr = firstBrokenBlock(reply)
-                if broken then
+                local _, bl = (broken or ""):gsub("\n", "")
+                if broken and bl < 1500 then
                     kind = "fix_code"
                     local okF, fixed = pcall(askAI, "fix_code", ("Tu código tiene este error de sintaxis: %s\nArréglalo y devuélvelo completo en un solo bloque ```lua.\n```lua\n%s\n```"):format(cerr, broken))
                     if okF and type(fixed) == "string" and not firstBrokenBlock(fixed) then reply = fixed end
@@ -12515,10 +12788,29 @@ task.spawn(function()
             addAI("Para que use el código de tu juego, pégalo en la pestaña **Servidor** del Remote Spy. Sin eso solo verá los nombres de las señales recibidas.", false)
         end
     end)
+    -- Leer script: lee un archivo de la carpeta workspace de tu ejecutor (solo lectura, no lo ejecuta).
+    iaRead.MouseButton1Click:Connect(function()
+        local path = iaInput.Text:gsub("^%s+", ""):gsub("%s+$", "")
+        if not path:find("%.%a+$") or path:find("\n") then path = "GOY_IA/mi_script.lua" end
+        if type(readfile) ~= "function" then addAI("Tu ejecutor no tiene **readfile**. Pega el código en la caja y toca **Enviar**.", true) return end
+        local okF, exists = pcall(function() return type(isfile) ~= "function" or isfile(path) end)
+        if not okF or not exists then
+            addAI(("No encontré **%s**. Guarda tu script en la carpeta workspace del ejecutor con ese nombre, o escribe la ruta en la caja y vuelve a tocar **Leer script**."):format(path), true)
+            return
+        end
+        local okR, src = pcall(readfile, path)
+        if not okR or type(src) ~= "string" or src == "" then addAI("No pude leer " .. path, true) return end
+        state.scriptSrc, state.scriptName = src, path
+        state.useCtx = true; iaCtx.Text = "Mi juego: ON"; iaCtx.BackgroundColor3 = Color3.fromRGB(40, 110, 80)
+        iaInput.Text = ""
+        local _, n = src:gsub("\n", "")
+        iaRun("read_script", ("Leí %s (%d líneas). Explícame para qué sirve cada parte y qué partes se parecen."):format(path, n + 1))
+    end)
     iaCopy.MouseButton1Click:Connect(function()
         if iaLastReply ~= "" then copy(iaLastReply, "Respuesta IA") else notify("GOY\nAún no hay respuesta") end
     end)
     iaClear.MouseButton1Click:Connect(function()
+        state.scriptSrc, state.scriptName = nil, nil
         for _, c in ipairs(iaLog:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
         aiMemory = {}
         iaLastReply = ""
