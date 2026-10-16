@@ -11879,7 +11879,13 @@ task.spawn(function()
             Headers = {["Content-Type"] = "application/json"}, Body = body})
         if not ok then return nil, "Error de red" end
         if type(res) ~= "table" then return nil, "Respuesta vacía" end
-        if res.StatusCode and res.StatusCode >= 400 then return nil, "HTTP " .. tostring(res.StatusCode) end
+        if res.StatusCode and res.StatusCode >= 400 then
+            local code = res.StatusCode
+            local why = (code == 402 or code == 429) and "la IA gratis pública bloqueó tu conexión (límite). Pon la URL de tu worker en ia_config.json"
+                or (code == 401 or code == 403) and "tu worker rechazó la petición (revisa la clave guardada en el worker)"
+                or "el servidor de la IA falló"
+            return nil, ("HTTP %d: %s"):format(code, why)
+        end
         return res.Body or "", nil
     end
     local aiMemory = {}
@@ -11898,7 +11904,7 @@ task.spawn(function()
             msgs[#msgs + 1] = {role = "user", content = (KIND_PREFIX[kind] or "") .. text}
             payload = HttpService:JSONEncode({model = cfg.model or "openai", messages = msgs})
         else
-            payload = HttpService:JSONEncode({kind = kind, message = text, game = tostring(game.PlaceId), user = me.Name})
+            payload = HttpService:JSONEncode({kind = kind, message = text, game = tostring(game.PlaceId), user = me.Name, history = aiMemory})
         end
         local body, err = httpPost(cfg.aiUrl, payload)
         if not body then return nil, err end
@@ -12138,7 +12144,12 @@ task.spawn(function()
     round(iaInput, 8)
     local iaSend = button("Enviar", iaWin, UDim2.new(0, 62, 0, 24), UDim2.new(0, 8, 1, -14))
     local iaFix = button("Corregir código", iaWin, UDim2.new(0, 110, 0, 24), UDim2.new(0, 74, 1, -14), C.ok)
-    local iaSignal = button("Enviar señal", iaWin, UDim2.new(0, 96, 0, 24), UDim2.new(0, 188, 1, -14), C.btnOn)
+    local iaSignal = button("Señal", iaWin, UDim2.new(0, 56, 0, 24), UDim2.new(0, 188, 1, -14), C.btnOn)
+    local iaCopy = button("Copiar", iaWin, UDim2.new(0, 60, 0, 24), UDim2.new(0, 250, 1, -14))
+    local iaLastReply = ""
+    iaCopy.MouseButton1Click:Connect(function()
+        if iaLastReply ~= "" then copy(iaLastReply, "Respuesta IA") else notify("GOY\nAún no hay respuesta") end
+    end)
     local iaHistory = {}
     local function iaAppend(who, msg, color)
         iaHistory[#iaHistory + 1] = ('<font color="#%s"><b>%s:</b></font> %s'):format(color or "9aa6ba", who, esc(msg))
@@ -12149,7 +12160,7 @@ task.spawn(function()
         iaAppend("Tú", text, "7aa2f7")
         task.spawn(function()
             local reply, err = askAI(kind, text)
-            if reply then iaAppend("IA", reply, "9ece6a") else iaAppend("IA", "Error: " .. tostring(err), "e06c9b") end
+            if reply then iaLastReply = reply; iaAppend("IA", reply, "9ece6a") else iaAppend("IA", "Error: " .. tostring(err), "e06c9b") end
         end)
     end
     iaSend.MouseButton1Click:Connect(function() local t = iaInput.Text; iaInput.Text = ""; iaRun("chat", t) end)
