@@ -11360,7 +11360,7 @@ task.spawn(function()
         secStart = os.clock(), secCount = 0,
         selectedKey = nil, lastAlertBy = {},
         lastButton = nil, lastButtonAt = -10,
-        serverSrc = "", serverReport = "", serverFixed = "",
+        serverSrc = "", serverReport = "", serverFixed = "", useCtx = true,
         config = nil, configErr = nil,
     }
     SHARED.spy = state
@@ -11914,8 +11914,37 @@ task.spawn(function()
     local aiMemory = {}
     local KIND_PREFIX = {
         chat = "", fix_code = "Corrige este código y devuélvelo completo:\n",
+        make_menu = "Crea un menú para Roblox que funcione a la primera, siguiendo esta base: LocalScript en StarterPlayerScripts, "
+            .. "ScreenGui en PlayerGui con ResetOnSpawn=false, ventana con UICorner que se puede arrastrar (InputBegan/InputChanged), "
+            .. "botón para abrir/cerrar, botones dentro de un ScrollingFrame con UIListLayout y AutomaticCanvasSize, cada botón con su función separada y pcall, "
+            .. "y que funcione en celular (Activated en vez de MouseButton1Click). Si debe comunicarse con el servidor, usa los RemoteEvents del código de su juego "
+            .. "e incluye también el Script del servidor que los valida. Lo que quiere el usuario:\n",
         analyze_signal = "Explica qué significa esta señal que el servidor me envió:\n",
     }
+    -- Contexto de TU juego para la IA: el código que pegaste en la pestaña Servidor,
+    -- los remotos que ese código atiende y las señales que tu cliente ha recibido (solo nombres).
+    local function gameContext()
+        local parts = {}
+        local okN, placeName = pcall(function() return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name end)
+        parts[#parts + 1] = ("Juego: %s (PlaceId %s)"):format(okN and tostring(placeName) or "?", tostring(game.PlaceId))
+        local src = state.serverSrc or ""
+        if src:gsub("%s", "") ~= "" then
+            local names, seen = {}, {}
+            for n in src:gmatch("[%w_%.:%(%)\"']-([%w_]+)%.OnServer%a+") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
+            for n in src:gmatch("WaitForChild%(%s*[\"']([^\"']+)[\"']") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
+            for n in src:gmatch("Instance%.new%(%s*[\"']Remote%a+[\"']%s*[^\n]-\n[^\n]-%.Name%s*=%s*[\"']([^\"']+)") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
+            if #names > 0 then parts[#parts + 1] = "Nombres usados en su código: " .. table.concat(names, ", ") end
+            local code = #src > 6000 and (src:sub(1, 6000) .. "\n-- (recortado)") or src
+            parts[#parts + 1] = "Código del juego del usuario (pegado por él en la pestaña Servidor). Úsalo para que lo que escribas encaje con sus nombres y remotos:\n```lua\n" .. code .. "\n```"
+        end
+        local seen = {}
+        for i = 1, math.min(#state.order, 15) do
+            local g = state.groups[state.order[i]]
+            if g and not g.custom then seen[#seen + 1] = ("%s (%s, %d args)"):format(g.path or g.name, g.class or "?", g.nargs or 0) end
+        end
+        if #seen > 0 then parts[#parts + 1] = "Señales que el servidor le ha enviado (solo referencia): " .. table.concat(seen, "; ") end
+        return table.concat(parts, "\n")
+    end
     local function askAI(kind, text)
         if not state.config then loadConfig() end
         if not state.config then return nil, state.configErr or "Sin config de IA" end
@@ -11924,10 +11953,16 @@ task.spawn(function()
         if cfg.format == "openai" then
             local msgs = {{role = "system", content = AI_SYSTEM}}
             for _, m in ipairs(aiMemory) do msgs[#msgs + 1] = m end
+            if state.useCtx then
+                local okC, ctx = pcall(gameContext)
+                if okC and ctx ~= "" then msgs[#msgs + 1] = {role = "system", content = ctx} end
+            end
             msgs[#msgs + 1] = {role = "user", content = (KIND_PREFIX[kind] or "") .. text}
             payload = HttpService:JSONEncode({model = cfg.model or "openai", messages = msgs})
         else
-            payload = HttpService:JSONEncode({kind = kind, message = text, game = tostring(game.PlaceId), user = me.Name, history = aiMemory})
+            local ctx = ""
+            if state.useCtx then local okC, c = pcall(gameContext); ctx = okC and c or "" end
+            payload = HttpService:JSONEncode({kind = kind, message = (KIND_PREFIX[kind] or "") .. text, context = ctx, game = tostring(game.PlaceId), user = me.Name, history = aiMemory})
         end
         local body, err = httpPost(cfg.aiUrl, payload)
         if not body and cfg.aiUrl == DEFAULT_AI_URL then
@@ -12225,7 +12260,9 @@ task.spawn(function()
         TextXAlignment = Enum.TextXAlignment.Left}, thinking)
 
     -- Atajos
-    local chips = new("Frame", {Size = UDim2.new(1, -16, 0, 26), Position = UDim2.new(0, 8, 1, -116), BackgroundTransparency = 1}, iaBody)
+    local chips = new("ScrollingFrame", {Size = UDim2.new(1, -16, 0, 30), Position = UDim2.new(0, 8, 1, -118), BackgroundTransparency = 1,
+        BorderSizePixel = 0, ScrollBarThickness = 2, ScrollingDirection = Enum.ScrollingDirection.X, CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.X, ScrollBarImageColor3 = Color3.fromRGB(90, 120, 180)}, iaBody)
     new("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, chips)
     local function chip(text, order, w)
         local b = new("TextButton", {Text = text, Size = UDim2.fromOffset(w, 26), BackgroundColor3 = IAC.chip, TextColor3 = C.text,
@@ -12235,7 +12272,10 @@ task.spawn(function()
     end
     local iaFix = chip("Corregir código", 1, 118)
     local iaSignal = chip("Explicar señal", 2, 110)
-    local iaCopy = chip("Copiar última", 3, 110)
+    local iaCopy = chip("Copiar última", 5, 104)
+    local iaMenu = chip("Crear menú", 3, 96)
+    local iaCtx = chip("Mi juego: ON", 4, 104)
+    iaCtx.BackgroundColor3 = Color3.fromRGB(40, 110, 80)
 
     -- Entrada
     local inputBox = new("Frame", {Size = UDim2.new(1, -16, 0, 74), Position = UDim2.new(0, 8, 1, -82),
@@ -12415,20 +12455,21 @@ task.spawn(function()
                     d.Position = UDim2.fromOffset(4 + (i - 1) * 10, ((t + i) % 3 == 0) and 4 or 7)
                 end
                 local secs = math.floor(os.clock() - started)
-                local verb = kind == "fix_code" and "corrigiendo el código" or (kind == "analyze_signal" and "analizando la señal" or "pensando")
+                local verb = kind == "make_menu" and "creando el menú" or kind == "fix_code" and "corrigiendo el código" or (kind == "analyze_signal" and "analizando la señal" or "pensando")
                 thinkText.Text = ("IA %s… %ds"):format(verb, secs)
                 task.wait(0.25)
             end
         end)
         task.spawn(function()
-            local reply, err = askAI(kind, text)
+            local okA, reply, err = pcall(askAI, kind, text)
+            if not okA then reply, err = nil, "error interno: " .. tostring(reply) end
             -- Si el código que dio no compila, se lo devuelve a la IA una vez para que lo arregle.
             if reply then
                 local broken, cerr = firstBrokenBlock(reply)
                 if broken then
                     kind = "fix_code"
-                    local fixed = askAI("fix_code", ("Tu código tiene este error de sintaxis: %s\nArréglalo y devuélvelo completo en un solo bloque ```lua.\n```lua\n%s\n```"):format(cerr, broken))
-                    if fixed and not firstBrokenBlock(fixed) then reply = fixed end
+                    local okF, fixed = pcall(askAI, "fix_code", ("Tu código tiene este error de sintaxis: %s\nArréglalo y devuélvelo completo en un solo bloque ```lua.\n```lua\n%s\n```"):format(cerr, broken))
+                    if okF and type(fixed) == "string" and not firstBrokenBlock(fixed) then reply = fixed end
                 end
             end
             busy = false
@@ -12437,10 +12478,11 @@ task.spawn(function()
             iaSend.BackgroundColor3 = IAC.send
             if reply then
                 iaLastReply = reply
-                addAI(reply, false)
+                local okD, derr = pcall(addAI, reply, false)
+                if not okD then pcall(addAI, "No pude dibujar la respuesta (" .. tostring(derr) .. "). Toca **Copiar última** para verla.", true) end
                 statusDot.BackgroundColor3 = IAC.online
             else
-                addAI("No pude responder: " .. tostring(err), true)
+                pcall(addAI, "No pude responder: " .. tostring(err), true)
                 statusDot.BackgroundColor3 = IAC.offline
             end
         end)
@@ -12460,6 +12502,18 @@ task.spawn(function()
     iaSignal.MouseButton1Click:Connect(function()
         local g = state.selectedKey and state.groups[state.selectedKey]
         if g then iaRun("analyze_signal", codeOf(g)) else addAI("Selecciona una señal en el Remote Spy y vuelve a tocar **Explicar señal**.", false) end
+    end)
+    iaMenu.MouseButton1Click:Connect(function()
+        if iaInput.Text:gsub("%s", "") == "" then addAI("Escribe qué menú quieres (por ejemplo: **menú con 3 botones: velocidad, salto y reset**) y toca **Crear menú**.", false) return end
+        sendFromBox("make_menu")
+    end)
+    iaCtx.MouseButton1Click:Connect(function()
+        state.useCtx = not state.useCtx
+        iaCtx.Text = state.useCtx and "Mi juego: ON" or "Mi juego: OFF"
+        iaCtx.BackgroundColor3 = state.useCtx and Color3.fromRGB(40, 110, 80) or IAC.chip
+        if state.useCtx and (state.serverSrc or ""):gsub("%s", "") == "" then
+            addAI("Para que use el código de tu juego, pégalo en la pestaña **Servidor** del Remote Spy. Sin eso solo verá los nombres de las señales recibidas.", false)
+        end
     end)
     iaCopy.MouseButton1Click:Connect(function()
         if iaLastReply ~= "" then copy(iaLastReply, "Respuesta IA") else notify("GOY\nAún no hay respuesta") end
