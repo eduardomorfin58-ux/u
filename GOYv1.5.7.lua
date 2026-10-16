@@ -11834,7 +11834,7 @@ task.spawn(function()
             for v in src:gmatch("([%w_]+)%s*%.%s*OnClientEvent") do listens[#listens + 1] = v end
             if #listens > 0 then
                 out[#out + 1] = ""
-                out[#out + 1] = "Escucha del servidor (OnClientEvent): " .. table.concat(listens, ", ")
+                out[#out + 1] = ("Escucha del servidor (OnClientEvent): %d evento(s), ver nombre y código abajo"):format(#listens)
             end
             local sends = {}
             for v, how in src:gmatch("([%w_]+)%s*:%s*(%a+Server)%s*%(") do sends[#sends + 1] = v .. " (" .. how .. ")" end
@@ -12231,8 +12231,8 @@ task.spawn(function()
         local lines = {}
         for l in (src .. "\n"):gmatch("(.-)\r?\n") do lines[#lines + 1] = l end
         -- variable -> nombre real del objeto (WaitForChild/FindFirstChild/.Name/Instance.new)
-        local alias = {}
-        for _, l in ipairs(lines) do
+        local alias, aliasLine = {}, {}
+        for ai, l in ipairs(lines) do
             local v, n = l:match("local%s+([%w_]+)%s*=.-WaitForChild%s*%(%s*[\"']([^\"']+)[\"']%s*[,%)][^\n]-$")
             if not v then v, n = l:match("local%s+([%w_]+)%s*=.-FindFirstChild%s*%(%s*[\"']([^\"']+)[\"']") end
             if not v then v, n = l:match("local%s+([%w_]+)%s*=%s*[%w_%.]+%.([%w_]+)%s*$") end
@@ -12247,6 +12247,7 @@ task.spawn(function()
                 -- se queda con el ÚLTIMO WaitForChild de la línea (el objeto final)
                 local lastN; for m in l:gmatch("WaitForChild%s*%(%s*[\"']([^\"']+)[\"']") do lastN = m end
                 alias[v] = lastN or n
+                aliasLine[v] = ai
             end
             local v2, n2 = l:match("^%s*([%w_]+)%.Name%s*=%s*[\"']([^\"']+)[\"']")
             if v2 and n2 then alias[v2] = n2 end
@@ -12291,6 +12292,10 @@ task.spawn(function()
             else
                 body, last = lines[i], i
             end
+            local root = obj:match("^([%w_]+)")
+            if root and aliasLine[root] and aliasLine[root] < i then
+                body = lines[aliasLine[root]] .. "\n" .. body
+            end
             local acts, fired = actionsOf(body)
             local name = objName(obj)
             events[#events + 1] = {
@@ -12326,6 +12331,17 @@ task.spawn(function()
             if e.params ~= "" then out[#out + 1] = ("     recibe: %s"):format(e.params) end
             if #e.actions > 0 then out[#out + 1] = "     acciones: " .. table.concat(e.actions, ", ") end
             if #e.fires > 0 then out[#out + 1] = "     dispara: " .. table.concat(e.fires, ", ") end
+            if e.event == "OnClientEvent" then
+                out[#out + 1] = ("     el servidor te envía %s%s"):format(e.name, e.params ~= "" and (" con " .. e.params) or "")
+            end
+            out[#out + 1] = ("     código del evento (líneas %d-%d):"):format(e.line, e.lastLine or e.line)
+            local n = 0
+            for l in (e.body .. "\n"):gmatch("(.-)\n") do
+                n = n + 1
+                if n > 300 then out[#out + 1] = "        … (toca el evento en la lista para verlo entero)"; break end
+                out[#out + 1] = "        " .. l
+            end
+            out[#out + 1] = ""
         end
         return table.concat(out, "\n")
     end
