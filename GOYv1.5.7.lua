@@ -11809,6 +11809,39 @@ task.spawn(function()
         -- Se analiza sin comentarios, para no dar por hecho algo que solo está escrito en un comentario.
         src = src:gsub("%-%-%[(=*)%[.-%]%1%]", ""):gsub("%-%-[^\n]*", "")
 
+        -- ¿Es código del cliente (LocalScript) o del servidor (Script)?
+        local serverHits = 0
+        for _, p in ipairs({"OnServerEvent", "OnServerInvoke", "PlayerAdded", "ProcessReceipt", "DataStoreService", "FireClient", "FireAllClients", "InvokeClient", "BindToClose", "SetNetworkOwner"}) do
+            if src:find(p, 1, true) then serverHits = serverHits + 1 end
+        end
+        local clientHits, clientWhat = 0, {}
+        for _, p in ipairs({"OnClientEvent", "OnClientInvoke", "LocalPlayer", "FireServer", "InvokeServer", "RenderStepped", "UserInputService", "PlayerGui", "CurrentCamera", "GetMouse"}) do
+            if src:find(p, 1, true) then clientHits = clientHits + 1; clientWhat[#clientWhat + 1] = p end
+        end
+        if clientHits > 0 and serverHits == 0 then
+            info.client = true
+            step("Este código usa cosas que solo existen en el cliente: " .. table.concat(clientWhat, ", ") .. ".")
+            step("No tiene OnServerEvent/OnServerInvoke ni nada del servidor, así que NO es un Script del servidor.")
+            local out = {"-- Análisis estático: este código es del CLIENTE (LocalScript)", "", "Proceso:"}
+            for _, l in ipairs(proc) do out[#out + 1] = l end
+            out[#out + 1] = ""
+            out[#out + 1] = "Qué significa:"
+            out[#out + 1] = "  [OK] No hace falta revisar exploits aquí: tipo, rango, cooldown, dueño y distancia se validan en el SERVIDOR."
+            out[#out + 1] = "  Si es el código que copió el Remote Spy, solo muestra lo que el servidor te ENVIÓ (a1, a2, a3 = argumentos)."
+            out[#out + 1] = "  Para ver qué hace el servidor con ese remoto, pega el Script del servidor de TU juego que tiene"
+            out[#out + 1] = "  OnServerEvent / FireClient de ese mismo remoto, y toca Analizar otra vez."
+            local listens = {}
+            for v in src:gmatch("([%w_]+)%s*%.%s*OnClientEvent") do listens[#listens + 1] = v end
+            if #listens > 0 then
+                out[#out + 1] = ""
+                out[#out + 1] = "Escucha del servidor (OnClientEvent): " .. table.concat(listens, ", ")
+            end
+            local sends = {}
+            for v, how in src:gmatch("([%w_]+)%s*:%s*(%a+Server)%s*%(") do sends[#sends + 1] = v .. " (" .. how .. ")" end
+            if #sends > 0 then out[#out + 1] = "Envía al servidor: " .. table.concat(sends, ", ") end
+            return table.concat(out, "\n"), info
+        end
+
         -- 1) validaciones generales
         local checks = {
             {k = "tipo (typeof/type)", has = src:find("typeof%s*%(") or src:find("type%s*%(")},
@@ -11955,6 +11988,9 @@ task.spawn(function()
     local function fixServer(src)
         if src == "" then return "" end
         local _, info = analyzeServer(src)
+        if info and info.client then
+            return "-- [GOY] Este código es del CLIENTE (LocalScript): no necesita guardas de servidor.\n-- [GOY] Pega el Script del servidor que usa este remoto (OnServerEvent/FireClient) para corregirlo.\n\n" .. src
+        end
         local log = {}
         local function note(s) log[#log + 1] = s end
         local function guardFor(params)
@@ -12200,6 +12236,13 @@ task.spawn(function()
             local v, n = l:match("local%s+([%w_]+)%s*=.-WaitForChild%s*%(%s*[\"']([^\"']+)[\"']%s*[,%)][^\n]-$")
             if not v then v, n = l:match("local%s+([%w_]+)%s*=.-FindFirstChild%s*%(%s*[\"']([^\"']+)[\"']") end
             if not v then v, n = l:match("local%s+([%w_]+)%s*=%s*[%w_%.]+%.([%w_]+)%s*$") end
+            if not v then
+                local v4, expr = l:match("local%s+([%w_]+)%s*=%s*(game[^\n]-)%s*$")
+                if v4 then
+                    local seg = expr:match("%.([%w_]+)$") or expr:match("%[%s*[\"']([^\"']+)[\"']%s*%]$")
+                    if seg then v, n = v4, seg end
+                end
+            end
             if v and n then
                 -- se queda con el ÚLTIMO WaitForChild de la línea (el objeto final)
                 local lastN; for m in l:gmatch("WaitForChild%s*%(%s*[\"']([^\"']+)[\"']") do lastN = m end
