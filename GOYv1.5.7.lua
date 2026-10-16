@@ -11364,7 +11364,7 @@ task.spawn(function()
         secStart = os.clock(), secCount = 0,
         selectedKey = nil, lastAlertBy = {},
         lastButton = nil, lastButtonAt = -10,
-        serverSrc = "", serverReport = "", serverFixed = "", useCtx = true,
+        serverSrc = "", serverReport = "", serverFixed = "", useCtx = true, events = {}, eventSel = nil,
         config = nil, configErr = nil,
     }
     SHARED.spy = state
@@ -11514,7 +11514,8 @@ task.spawn(function()
     local function hook(remote)
         if state.conns[remote] then return end
         local ok, conn = pcall(function()
-            return remote.OnClientEvent:Connect(function(...)
+            local sig = remote:IsA("BindableEvent") and remote.Event or remote.OnClientEvent
+            return sig:Connect(function(...)
                 local n = select("#", ...)
                 local args = {...}
                 pcall(record, remote, args, n)
@@ -11522,7 +11523,7 @@ task.spawn(function()
         end)
         if ok and conn then state.conns[remote] = conn end
     end
-    local function isRemote(d) return d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent") end
+    local function isRemote(d) return d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent") or d:IsA("BindableEvent") end
     -- Todo lo que el servidor replica y tu cliente puede ver (sin CoreGui).
     local ROOT_NAMES = {"ReplicatedStorage", "ReplicatedFirst", "Workspace", "Players", "Lighting", "Teams", "SoundService", "StarterGui", "StarterPack"}
     local function getRoots()
@@ -11648,6 +11649,37 @@ task.spawn(function()
             pcall(function() state.watchConns[#state.watchConns + 1] = MPS.PromptProductPurchaseFinished:Connect(function(uid, id, done) if uid == me.UserId then purchase("Producto", id, done) end end) end)
             pcall(function() state.watchConns[#state.watchConns + 1] = MPS.PromptGamePassPurchaseFinished:Connect(function(p, id, done) if p == me then purchase("GamePass", id, done) end end) end)
         end
+        pcall(function()
+        -- Entradas y salidas de jugadores, tu equipo y tu Humanoid (vida / muerte).
+        local PlayersS = game:GetService("Players")
+        state.watchConns[#state.watchConns + 1] = PlayersS.PlayerAdded:Connect(function(p)
+            recordInfo("pl+|" .. p.Name, "Entra: " .. p.Name, "Players." .. p.Name, "PlayerAdded", "Generales", {("-- Entró %s · %s"):format(p.Name, os.date("%H:%M:%S"))}, 1)
+        end)
+        state.watchConns[#state.watchConns + 1] = PlayersS.PlayerRemoving:Connect(function(p)
+            recordInfo("pl-|" .. p.Name, "Sale: " .. p.Name, "Players." .. p.Name, "PlayerRemoving", "Generales", {("-- Salió %s · %s"):format(p.Name, os.date("%H:%M:%S"))}, 1)
+        end)
+        pcall(function()
+            state.watchConns[#state.watchConns + 1] = me:GetPropertyChangedSignal("Team"):Connect(function()
+                recordInfo("team", "Equipo: " .. tostring(me.Team and me.Team.Name), "Players.LocalPlayer.Team", "Team", "Mías", {("-- Tu equipo cambió a %s"):format(tostring(me.Team and me.Team.Name))}, 1)
+            end)
+        end)
+        local function onHum(ch)
+            local hum = ch and ch:FindFirstChildOfClass("Humanoid") or (ch and ch:WaitForChild("Humanoid", 5))
+            if not hum then return end
+            local lastHp = hum.Health
+            state.watchConns[#state.watchConns + 1] = hum.HealthChanged:Connect(function(hp)
+                local d = hp - lastHp; lastHp = hp
+                recordInfo("hp", "Vida: " .. math.floor(hp), pathOf(hum), "HealthChanged", "Mías", {
+                    ("-- Tu vida cambió · %s"):format(os.date("%H:%M:%S")), ("-- %d (%s%d)"):format(math.floor(hp), d >= 0 and "+" or "", math.floor(d)),
+                }, 1)
+            end)
+            state.watchConns[#state.watchConns + 1] = hum.Died:Connect(function()
+                recordInfo("died", "Moriste", pathOf(hum), "Died", "Mías", {("-- Tu Humanoid murió · %s"):format(os.date("%H:%M:%S"))}, 1)
+            end)
+        end
+        task.spawn(onHum, me.Character)
+        state.watchConns[#state.watchConns + 1] = me.CharacterAdded:Connect(function(ch) task.spawn(onHum, ch) end)
+        end)
         -- Objetos nuevos en el mapa que llevan tu nombre (lo que compras y aparece).
         state.watchConns[#state.watchConns + 1] = workspace.DescendantAdded:Connect(function(d)
             if not state.listening then return end
@@ -11915,6 +11947,7 @@ task.spawn(function()
         for _, l in ipairs(clientLines) do out[#out + 1] = l end
         out[#out + 1] = ""
         out[#out + 1] = "Nota: es revisión de texto, no ejecuta el código. Usa 'Corregir código' para una versión con los arreglos aplicados."
+        out[#out + 1] = "Eventos: toca uno en la lista de la izquierda para ver su código; el botón -> te lleva a su señal recibida."
         return table.concat(out, "\n"), info
     end
     -- Devuelve el código con los arreglos aplicados y, arriba, la lista de lo que se hizo.
@@ -12083,6 +12116,177 @@ task.spawn(function()
         header[#header + 1] = ""
         header[#header + 1] = ""
         return table.concat(header, "\n") .. table.concat(lines, "\n")
+    end
+
+    local extractEvents, eventReport
+    do
+    ---------------- Detector de eventos del código (solo lee el texto) ----------------
+    local EVENT_INFO = {
+        OnServerEvent = "un jugador envía este remoto al servidor", OnServerInvoke = "un jugador pide algo al servidor (RemoteFunction)",
+        OnClientEvent = "el servidor envía este remoto al cliente", OnClientInvoke = "el servidor pide algo al cliente",
+        OnInvoke = "BindableFunction llamada", Event = "BindableEvent disparado",
+        PlayerAdded = "entra un jugador", PlayerRemoving = "sale un jugador", CharacterAdded = "aparece el personaje",
+        CharacterRemoving = "se quita el personaje", CharacterAppearanceLoaded = "carga la ropa del personaje",
+        Touched = "algo toca la pieza", TouchEnded = "algo deja de tocar la pieza", Died = "muere el Humanoid",
+        HealthChanged = "cambia la vida", Running = "el Humanoid corre", Jumping = "el Humanoid salta", StateChanged = "cambia el estado del Humanoid",
+        Changed = "cambia una propiedad/valor", ChildAdded = "se añade un hijo", ChildRemoved = "se quita un hijo",
+        DescendantAdded = "se añade un descendiente", DescendantRemoving = "se quita un descendiente",
+        AncestryChanged = "cambia el padre", AttributeChanged = "cambia un atributo",
+        MouseClick = "clic en ClickDetector", RightMouseClick = "clic derecho en ClickDetector",
+        Triggered = "se activa el ProximityPrompt", TriggerEnded = "termina el ProximityPrompt",
+        PromptShown = "se muestra el ProximityPrompt", Activated = "se usa la Tool/botón", Deactivated = "se suelta la Tool",
+        Equipped = "se equipa la Tool", Unequipped = "se guarda la Tool", MouseButton1Click = "clic en botón",
+        Heartbeat = "cada frame (físicas)", Stepped = "cada frame (antes de físicas)", RenderStepped = "cada frame (render)",
+        PreSimulation = "cada frame (antes de simular)", PostSimulation = "cada frame (después de simular)",
+        Chatted = "el jugador escribe en el chat", Idled = "el jugador está inactivo",
+        PromptPurchaseFinished = "termina una compra", PromptGamePassPurchaseFinished = "termina compra de GamePass",
+        PromptProductPurchaseFinished = "termina compra de producto", ProcessReceipt = "Roblox confirma una compra de producto",
+        Completed = "termina el Tween", Ended = "termina el sonido/animación", Played = "empieza el sonido", KeyframeReached = "llega a un keyframe",
+        BindToClose = "el servidor se va a cerrar", OnTeleport = "el jugador se teletransporta", MoveToFinished = "llega al destino",
+        FocusLost = "se suelta la caja de texto", InputBegan = "empieza un toque/tecla", InputEnded = "termina un toque/tecla",
+    }
+    local ACTION_PATS = {
+        {"FireClient%s*%(", "envía a un jugador (FireClient)"}, {"FireAllClients%s*%(", "envía a todos (FireAllClients)"},
+        {"FireServer%s*%(", "envía al servidor (FireServer)"}, {"InvokeClient%s*%(", "pide al cliente (InvokeClient)"},
+        {":Destroy%s*%(", "destruye un objeto"}, {"Instance%.new%s*%(", "crea un objeto"}, {":Clone%s*%(", "clona un objeto"},
+        {"%.Value%s*[%+%-%*/]?=[^=]", "cambia un valor"}, {":SetAttribute%s*%(", "cambia un atributo"},
+        {"%.Health%s*[%+%-]?=[^=]", "cambia la vida"}, {":TakeDamage%s*%(", "hace daño"}, {"BreakJoints", "mata/rompe"},
+        {"%.Parent%s*=[^=]", "mueve un objeto (Parent)"}, {"CFrame%s*=[^=]", "mueve/teletransporta (CFrame)"}, {":PivotTo%s*%(", "mueve un modelo"},
+        {":MoveTo%s*%(", "mueve"}, {"WalkSpeed%s*=[^=]", "cambia velocidad"}, {"JumpPower%s*=[^=]", "cambia salto"},
+        {":SetAsync%s*%(", "guarda datos"}, {":UpdateAsync%s*%(", "guarda datos"}, {":GetAsync%s*%(", "lee datos"},
+        {":IncrementAsync%s*%(", "suma datos"}, {":Kick%s*%(", "expulsa"}, {":LoadCharacter%s*%(", "reaparece al jugador"},
+        {"TeleportAsync", "teletransporta a otro lugar"}, {":Teleport%s*%(", "teletransporta"}, {":Play%s*%(", "reproduce sonido/animación"},
+        {"SetNetworkOwner", "cambia dueño de físicas"}, {":ApplyImpulse", "empuja"}, {"AssemblyLinearVelocity%s*=", "cambia velocidad física"},
+        {"PromptPurchase", "abre una compra"}, {"task%.delay", "espera y luego hace algo"}, {"Debris", "borra después de un tiempo"},
+    }
+    local function stripLine(l)
+        l = l:gsub("%-%-.*$", "")
+        l = l:gsub('\\.', ""):gsub('"[^"]*"', '""'):gsub("'[^']*'", "''")
+        return l
+    end
+    local function blockDelta(l)
+        local d = 0
+        local c = " " .. stripLine(l) .. " "
+        for w in c:gmatch("[%w_]+") do
+            if w == "function" or w == "do" or w == "repeat" then d = d + 1
+            elseif w == "then" then d = d + 1
+            elseif w == "elseif" then d = d - 1
+            elseif w == "end" or w == "until" then d = d - 1 end
+        end
+        -- "while/for ... do" ya cuenta por el do; "if ... then" por el then
+        return d
+    end
+    local function bodyFrom(lines, i, maxLines)
+        local depth, started, last = 0, false, i
+        for j = i, math.min(#lines, i + (maxLines or 600)) do
+            depth = depth + blockDelta(lines[j])
+            if depth > 0 then started = true end
+            last = j
+            if j == i and depth <= 0 then break end
+            if started and depth <= 0 then break end
+            if not started and j > i + 1 then break end
+        end
+        return table.concat(lines, "\n", i, last), last
+    end
+    -- Busca todos los eventos del código: objeto.Evento:Connect/Once, OnServerInvoke =, GetPropertyChangedSignal, etc.
+    extractEvents = function(src)
+        local events = {}
+        if type(src) ~= "string" or src:gsub("%s", "") == "" then return events end
+        local lines = {}
+        for l in (src .. "\n"):gmatch("(.-)\r?\n") do lines[#lines + 1] = l end
+        -- variable -> nombre real del objeto (WaitForChild/FindFirstChild/.Name/Instance.new)
+        local alias = {}
+        for _, l in ipairs(lines) do
+            local v, n = l:match("local%s+([%w_]+)%s*=.-WaitForChild%s*%(%s*[\"']([^\"']+)[\"']%s*[,%)][^\n]-$")
+            if not v then v, n = l:match("local%s+([%w_]+)%s*=.-FindFirstChild%s*%(%s*[\"']([^\"']+)[\"']") end
+            if not v then v, n = l:match("local%s+([%w_]+)%s*=%s*[%w_%.]+%.([%w_]+)%s*$") end
+            if v and n then
+                -- se queda con el ÚLTIMO WaitForChild de la línea (el objeto final)
+                local lastN; for m in l:gmatch("WaitForChild%s*%(%s*[\"']([^\"']+)[\"']") do lastN = m end
+                alias[v] = lastN or n
+            end
+            local v2, n2 = l:match("^%s*([%w_]+)%.Name%s*=%s*[\"']([^\"']+)[\"']")
+            if v2 and n2 then alias[v2] = n2 end
+            local v3, cls = l:match("local%s+([%w_]+)%s*=%s*Instance%.new%s*%(%s*[\"']([%w_]+)[\"']")
+            if v3 and not alias[v3] then alias[v3] = cls end
+        end
+        local funcs = {}
+        for i, l in ipairs(lines) do
+            local fn = l:match("^%s*local%s+function%s+([%w_]+)%s*%(") or l:match("^%s*function%s+([%w_%.:]+)%s*%(")
+            if fn then funcs[fn] = i end
+        end
+        local function objName(expr)
+            local base = expr:match("([%w_]+)$") or expr
+            local root = expr:match("^([%w_]+)")
+            if alias[expr] then return alias[expr] end
+            local last; for m in expr:gmatch("[\"']([^\"']+)[\"']") do last = m end
+            if last then return last end
+            if alias[base] then return alias[base] end
+            if root and alias[root] and root == expr then return alias[root] end
+            return base
+        end
+        local function actionsOf(body)
+            local acts, seenA = {}, {}
+            for _, ap in ipairs(ACTION_PATS) do
+                if body:find(ap[1]) and not seenA[ap[2]] then seenA[ap[2]] = true; acts[#acts + 1] = ap[2] end
+            end
+            -- qué remotos dispara dentro
+            local fired = {}
+            for r in body:gmatch("([%w_]+)%s*:%s*Fire%a*%s*%(") do fired[#fired + 1] = objName(r) end
+            return acts, fired
+        end
+        local function params(l) return l:match("function%s*[%w_%.:]*%s*%(([^%)]*)%)") or "" end
+        local function add(i, obj, ev, how)
+            local body, last
+            local handler = lines[i]:match(":Connect%s*%(%s*([%w_%.:]+)%s*%)") or lines[i]:match(":Once%s*%(%s*([%w_%.:]+)%s*%)")
+                or lines[i]:match("=%s*([%w_%.:]+)%s*$")
+            if lines[i]:find("function") then
+                body, last = bodyFrom(lines, i)
+            elseif handler and funcs[handler] then
+                body, last = bodyFrom(lines, funcs[handler])
+                body = lines[i] .. "\n\n-- función que usa:\n" .. body
+            else
+                body, last = lines[i], i
+            end
+            local acts, fired = actionsOf(body)
+            local name = objName(obj)
+            events[#events + 1] = {
+                line = i, lastLine = last, object = obj, name = name, event = ev, how = how,
+                params = params(lines[i]), info = EVENT_INFO[ev] or (ev:find("^Changed:") and "cambia la propiedad " .. ev:sub(9)) or (ev:find("^Atributo:") and "cambia el atributo " .. ev:sub(10)) or "evento", body = body, actions = acts, fires = fired,
+            }
+        end
+        for i, l in ipairs(lines) do
+            local c = l:gsub("%-%-.*$", "")
+            for obj, ev in c:gmatch("([%w_%.%[%]\"':%(%)]-)%.([%w_]+)%s*:%s*Connect%s*%(") do add(i, obj, ev, "Connect") end
+            for obj, ev in c:gmatch("([%w_%.%[%]\"':%(%)]-)%.([%w_]+)%s*:%s*Once%s*%(") do add(i, obj, ev, "Once") end
+            for obj, ev in c:gmatch("([%w_%.%[%]\"':%(%)]-)%.([%w_]+)%s*:%s*ConnectParallel%s*%(") do add(i, obj, ev, "ConnectParallel") end
+            local o2, e2 = c:match("([%w_%.%[%]\"':%(%)]-)%.(On%a*Invoke)%s*=[^=]")
+            if o2 then add(i, o2, e2, "callback") end
+            local o3 = c:match("([%w_%.:%(%)\"']-)%.ProcessReceipt%s*=[^=]")
+            if o3 then add(i, o3, "ProcessReceipt", "callback") end
+            for o4, prop in l:gmatch("([%w_%.]+)%s*:%s*GetPropertyChangedSignal%s*%(%s*[\"']([%w_]+)[\"']") do add(i, o4, "Changed:" .. prop, "Connect") end
+            for o5, at in l:gmatch("([%w_%.]+)%s*:%s*GetAttributeChangedSignal%s*%(%s*[\"']([%w_]+)[\"']") do add(i, o5, "Atributo:" .. at, "Connect") end
+            if c:find("BindToClose%s*%(") then add(i, "game", "BindToClose", "callback") end
+        end
+        -- limpia nombres de objeto raros como game:GetService("Players")
+        for _, e in ipairs(events) do
+            local svc = e.object:match("GetService%s*%(%s*[\"']([%w_]+)[\"']")
+            if svc and e.name == svc then e.name = svc end
+            e.title = ("%s.%s"):format(e.name, e.event)
+        end
+        return events
+    end
+    eventReport = function(events)
+        local out = {("Eventos detectados en el código: %d"):format(#events)}
+        for k, e in ipairs(events) do
+            out[#out + 1] = ("  %d) línea %d · %s  (%s)"):format(k, e.line, e.title, e.info)
+            if e.params ~= "" then out[#out + 1] = ("     recibe: %s"):format(e.params) end
+            if #e.actions > 0 then out[#out + 1] = "     acciones: " .. table.concat(e.actions, ", ") end
+            if #e.fires > 0 then out[#out + 1] = "     dispara: " .. table.concat(e.fires, ", ") end
+        end
+        return table.concat(out, "\n")
+    end
+
     end
 
     ---------------- Config de la IA ----------------
@@ -12407,6 +12611,28 @@ task.spawn(function()
         Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.Code,
         TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top}, codeScroll)
     new("UIPadding", {PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8)}, codeLabel)
+    new("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder}, codeScroll)
+    codeLabel.LayoutOrder = 0
+    -- Visor por trozos: Roblox no dibuja textos gigantes en una sola etiqueta.
+    local viewExtra, lastViewKey = {}, nil
+    local function setView(plain, colorFn)
+        plain = plain or ""
+        local key = plain .. "|" .. tostring(colorFn)
+        if key == lastViewKey then return end
+        lastViewKey = key
+        for _, l in ipairs(viewExtra) do l:Destroy() end
+        viewExtra = {}
+        local lines = {}
+        for l in (plain .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
+        local function chunk(i) return table.concat(lines, "\n", i, math.min(i + 149, #lines)) end
+        local okC, rich = pcall(colorFn, chunk(1)); codeLabel.Text = okC and rich or esc(chunk(1))
+        for i = 151, #lines, 150 do
+            local okR, r = pcall(colorFn, chunk(i))
+            viewExtra[#viewExtra + 1] = new("TextLabel", {Text = okR and r or esc(chunk(i)), RichText = true, AutomaticSize = Enum.AutomaticSize.XY,
+                Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 13,
+                TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = i}, codeScroll)
+        end
+    end
     -- Caja de texto del servidor (oculta salvo en pestaña Servidor)
     local serverBox = new("TextBox", {PlaceholderText = "Pega aquí el código de un Script del servidor de TU juego…",
         Text = "", MultiLine = true, ClearTextOnFocus = false, TextWrapped = true,
@@ -12415,7 +12641,10 @@ task.spawn(function()
         TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, BorderSizePixel = 0, Visible = false}, right)
     round(serverBox, 10); stroke(serverBox, C.stroke, 1)
     new("UIPadding", {PaddingTop = UDim.new(0, 6), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6)}, serverBox)
-    serverBox:GetPropertyChangedSignal("Text"):Connect(function() state.serverSrc = serverBox.Text end)
+    serverBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local t = serverBox.Text
+        if not t:find("%-%- … %(archivo completo cargado") then state.serverSrc = t end
+    end)
 
     -- Botonera inferior derecha (dos juegos: señales y servidor)
     local prevBtn = button("<", right, UDim2.new(0, 46, 0, 26), UDim2.new(0, 0, 1, -54))
@@ -12426,7 +12655,9 @@ task.spawn(function()
     -- Servidor
     local analyzeBtn = button("Analizar", right, UDim2.new(0, 90, 0, 26), UDim2.new(0, 0, 1, -54), C.server)
     local fixBtn = button("Corregir código", right, UDim2.new(0, 130, 0, 26), UDim2.new(0, 96, 1, -54), C.ok)
-    local copyFixBtn = button("Copiar", right, UDim2.new(0, 84, 0, 26), UDim2.new(0, 232, 1, -54), C.btnOn)
+    local copyFixBtn = button("Copiar", right, UDim2.new(0, 70, 0, 26), UDim2.new(0, 232, 1, -54), C.btnOn)
+    local loadFileBtn = button("Cargar archivo", right, UDim2.new(0, 110, 0, 26), UDim2.new(0, 0, 1, -26), C.btn)
+    local clearSrvBtn = button("Borrar", right, UDim2.new(0, 70, 0, 26), UDim2.new(0, 116, 1, -26), C.btn)
 
     ---------------- IA panel (chat con burbujas, "pensando…", código copiable) ----------------
     local IAC = {
@@ -12934,17 +13165,23 @@ task.spawn(function()
                 if state.search == "" or string.find(string.lower(name), string.lower(state.search), 1, true) then
                     local b = state.buttons[name]
                     local nsig = 0; for _ in pairs(b.signals) do nsig = nsig + 1 end
-                    rows[#rows + 1] = {key = "button:" .. name, text = ("%s\n%d señales · %s"):format(name, nsig, b.last), color = C.button, buttonName = name}
+                    rows[#rows + 1] = {key = "button:" .. name, text = ("%s\n%d señales · %s"):format(name, nsig, b.last), color = C.button, buttonName = name, go = nsig > 0 and "Evento" or nil}
                 end
             end
         elseif state.tab == "Servidor" then
-            -- sin filas; se usa la caja de texto
+            for k, e in ipairs(state.events) do
+                if #rows >= ROWS_SHOWN then break end
+                if state.search == "" or string.find(string.lower(e.title), string.lower(state.search), 1, true) then
+                    rows[#rows + 1] = {key = "event:" .. k, text = ("%s\nlínea %d · %s"):format(e.title, e.line, e.info),
+                        color = C.server, event = e, go = "Señal"}
+                end
+            end
         else
             for _, key in ipairs(state.order) do
                 if #rows >= ROWS_SHOWN then break end
                 local g = state.groups[key]
                 if g and matches(g) then
-                    rows[#rows + 1] = {key = key, text = signalLine(g), color = g.spam and C.alert or zoneColor(g.zone), group = g}
+                    rows[#rows + 1] = {key = key, text = signalLine(g), color = g.spam and C.alert or zoneColor(g.zone), group = g, go = "Código"}
                 end
             end
         end
@@ -12965,6 +13202,13 @@ task.spawn(function()
                 if g then for _, n in ipairs(g.players) do if n == row.player then out[#out + 1] = ("%s  %s x%d"):format(g.zone, g.name, g.count); break end end end
             end
             return table.concat(out, "\n"), "Jugador: " .. row.player
+        elseif row.event then
+            local e = row.event
+            local hdr = {("-- Evento: %s  (%s)"):format(e.title, e.info), ("-- Líneas %d-%d · %s"):format(e.line, e.lastLine or e.line, e.how)}
+            if e.params ~= "" then hdr[#hdr + 1] = "-- Recibe: " .. e.params end
+            if #e.actions > 0 then hdr[#hdr + 1] = "-- Acciones: " .. table.concat(e.actions, ", ") end
+            if #e.fires > 0 then hdr[#hdr + 1] = "-- Dispara: " .. table.concat(e.fires, ", ") end
+            return table.concat(hdr, "\n") .. "\n\n" .. e.body, "Evento " .. e.title .. " · línea " .. e.line
         elseif row.buttonName then
             local b = state.buttons[row.buttonName]
             local out = {("-- Botón: %s"):format(row.buttonName), ("-- Señales del servidor tras pulsarlo:"):format()}
@@ -12973,6 +13217,49 @@ task.spawn(function()
             return table.concat(out, "\n"), "Botón: " .. row.buttonName
         end
         return "", ""
+    end
+    -- Saltos entre opciones: señal <-> evento del código, botón -> su señal.
+    local jumpFrom
+    local function findEventFor(name)
+        local lname = string.lower(name or "")
+        for k, e in ipairs(state.events) do if string.lower(e.name) == lname then return k end end
+        for k, e in ipairs(state.events) do if e.body:lower():find(lname, 1, true) then return k end end
+        return nil
+    end
+    local function findGroupFor(name)
+        local lname = string.lower(name or "")
+        for _, key in ipairs(state.order) do local g = state.groups[key]; if g and string.lower(g.name) == lname then return key end end
+        return nil
+    end
+    jumpFrom = function(row)
+        if not row then return end
+        if row.group then
+            local k = findEventFor(row.group.name)
+            if k then
+                state.tab = "Servidor"; state.selectedKey = "event:" .. k; state.dirty = true
+                notify("GOY\nEvento del código: " .. state.events[k].title)
+            else
+                notify("GOY\nNo hay código de " .. row.group.name .. ". Pega tu Script en Servidor y toca Analizar.")
+            end
+        elseif row.event then
+            local key = findGroupFor(row.event.name)
+            for _, f in ipairs(row.event.fires) do key = key or findGroupFor(f) end
+            if key then
+                state.tab = "Todas"; searchBox.Text = ""; state.search = ""; state.selectedKey = key; state.dirty = true
+                notify("GOY\nSeñal recibida: " .. state.groups[key].name)
+            else
+                notify("GOY\nAún no llegó ninguna señal de " .. row.event.name .. ". Enciende RX y haz la acción en el juego.")
+            end
+        elseif row.buttonName then
+            local b = state.buttons[row.buttonName]
+            local firstKey
+            for key in pairs(b and b.signals or {}) do if state.groups[key] then firstKey = key; break end end
+            if firstKey then
+                state.tab = "Todas"; searchBox.Text = ""; state.search = ""; state.selectedKey = firstKey; state.dirty = true
+            else
+                notify("GOY\nEse botón aún no tiene señales")
+            end
+        end
     end
     local function render()
         local c = counts()
@@ -12990,26 +13277,19 @@ task.spawn(function()
         local serverTab = state.tab == "Servidor"
         serverBox.Visible = serverTab
         codeScroll.Visible = true
-        list.Visible = not serverTab
+        list.Visible = true
         if serverTab then
-            serverBox.Size = UDim2.new(1, 0, 0.45, -16)
-            codeScroll.Position = UDim2.new(0, 0, 0.45, 8)
-            codeScroll.Size = UDim2.new(1, 0, 0.55, -44)
+            serverBox.Size = UDim2.new(1, 0, 0.36, -10)
+            codeScroll.Position = UDim2.new(0, 0, 0.36, 14)
+            codeScroll.Size = UDim2.new(1, 0, 0.64, -72)
         else
             codeScroll.Position = UDim2.fromOffset(0, 20)
             codeScroll.Size = UDim2.new(1, 0, 1, -78)
         end
-        right.Size = serverTab and UDim2.new(1, 0, 1, -62) or UDim2.new(0.58, 0, 1, -62)
-        right.Position = serverTab and UDim2.fromOffset(0, 62) or UDim2.new(0.42, 0, 0, 62)
         prevBtn.Visible = not serverTab; nextBtn.Visible = not serverTab
         copyBtn.Visible = not serverTab; ignoreBtn.Visible = not serverTab; copyTabBtn.Visible = not serverTab
         analyzeBtn.Visible = serverTab; fixBtn.Visible = serverTab; copyFixBtn.Visible = serverTab
-
-        if serverTab then
-            header.Text = "Pega un Script del servidor de TU juego: Analizar o Corregir código."
-            codeLabel.Text = state.serverView or ""
-            return
-        end
+        loadFileBtn.Visible = serverTab; clearSrvBtn.Visible = serverTab
 
         currentRows = computeRows()
         visibleKeys = {}
@@ -13024,12 +13304,18 @@ task.spawn(function()
                 round(b, 7)
                 new("UIPadding", {PaddingLeft = UDim.new(0, 12), PaddingTop = UDim.new(0, 3)}, b)
                 new("Frame", {Name = "Bar", Size = UDim2.new(0, 4, 1, -8), Position = UDim2.new(0, -8, 0, 4), BorderSizePixel = 0}, b)
+                local go = new("TextButton", {Name = "Go", Text = "->", Size = UDim2.fromOffset(44, 26), Position = UDim2.new(1, -46, 0.5, -13),
+                    BackgroundColor3 = C.btnOn, TextColor3 = Color3.new(1, 1, 1), Font = Enum.Font.GothamBold, TextSize = 11, BorderSizePixel = 0, ZIndex = 3}, b)
+                round(go, 6)
                 local index = i
                 b.MouseButton1Click:Connect(function() state.selectedKey = visibleKeys[index]; state.dirty = true end)
+                go.MouseButton1Click:Connect(function() pcall(jumpFrom, currentRows[index]) end)
                 rowPool[i] = b
             end
             b.Visible = true
             b.Text = row.text
+            b.Go.Visible = row.go ~= nil
+            b.Go.Text = row.go or ""
             b.Bar.BackgroundColor3 = row.color
             b.BackgroundColor3 = (row.key == state.selectedKey) and C.rowSel or C.row
         end
@@ -13037,8 +13323,14 @@ task.spawn(function()
 
         local selected
         for _, row in ipairs(currentRows) do if row.key == state.selectedKey then selected = row end end
+        if serverTab and not selected then
+            header.Text = (#state.events > 0) and ("%d eventos · toca uno para ver su código"):format(#state.events)
+                or "Pega el código de TU juego (o Cargar archivo) y toca Analizar."
+            setView(state.serverPlain or "", state.serverColor or colorize)
+            return
+        end
         local text, head = detailFor(selected)
-        codeLabel.Text = colorize(text)
+        setView(text, colorize)
         header.Text = head
     end
     local function selectIndex(delta)
@@ -13092,20 +13384,55 @@ task.spawn(function()
         end
         return table.concat(out, "\n")
     end
+    local function srcNow()
+        local t = serverBox.Text or ""
+        if t ~= "" and not t:find("%-%- … %(archivo completo cargado") then state.serverSrc = t end
+        return state.serverSrc or ""
+    end
     analyzeBtn.MouseButton1Click:Connect(function()
-        state.serverReport = analyzeServer(state.serverSrc)
-        state.serverCopy = state.serverReport
-        state.serverView = reportColor(state.serverReport)
-        state.dirty = true
-        notify("GOY\nAnálisis listo")
+        local src = srcNow()
+        if src:gsub("%s", "") == "" then notify("GOY\nPega el código primero o toca Cargar archivo") return end
+        local okA, rep = pcall(analyzeServer, src)
+        local okE, evs = pcall(extractEvents, src)
+        state.events = okE and evs or {}
+        local text = (okA and rep or ("-- El análisis tuvo un problema: " .. tostring(rep)))
+        text = text .. "\n\n" .. eventReport(state.events)
+        if not okE then text = text .. "\n-- (no pude leer los eventos: " .. tostring(evs) .. ")" end
+        state.serverReport, state.serverCopy = text, text
+        state.serverPlain, state.serverColor = text, reportColor
+        state.selectedKey = nil; state.dirty = true
+        notify(("GOY\nAnálisis listo · %d eventos"):format(#state.events))
     end)
     fixBtn.MouseButton1Click:Connect(function()
-        state.serverFixed = fixServer(state.serverSrc)
-        if state.serverFixed == "" then notify("GOY\nPega el código primero") return end
-        state.serverCopy = state.serverFixed
-        state.serverView = colorize(state.serverFixed)
-        state.dirty = true
+        local src = srcNow()
+        if src:gsub("%s", "") == "" then notify("GOY\nPega el código primero") return end
+        local okF, fixed = pcall(fixServer, src)
+        if not okF then
+            state.serverPlain, state.serverColor = "-- No pude corregirlo: " .. tostring(fixed), colorize
+            state.dirty = true; return
+        end
+        state.serverFixed, state.serverCopy = fixed, fixed
+        state.serverPlain, state.serverColor = fixed, colorize
+        local okE, evs = pcall(extractEvents, src); state.events = okE and evs or state.events
+        state.selectedKey = nil; state.dirty = true
         notify("GOY\nCódigo corregido (completo). Toca Copiar.")
+    end)
+    loadFileBtn.MouseButton1Click:Connect(function()
+        if type(readfile) ~= "function" then notify("GOY\nTu ejecutor no tiene readfile") return end
+        local path = (serverBox.Text or ""):match("^%s*([%w_%-%./ ]+%.%a+)%s*$") or "GOY_IA/servidor.lua"
+        local okF, exists = pcall(function() return type(isfile) ~= "function" or isfile(path) end)
+        if not okF or not exists then notify("GOY\nNo encontré " .. path .. " en la carpeta workspace") return end
+        local okR, src = pcall(readfile, path)
+        if not okR or type(src) ~= "string" then notify("GOY\nNo pude leer " .. path) return end
+        state.serverSrc = src
+        local _, nl = src:gsub("\n", "")
+        -- la caja solo muestra el inicio si es enorme; el análisis usa el archivo completo
+        serverBox.Text = #src > 15000 and (src:sub(1, 15000) .. "\n-- … (archivo completo cargado: " .. (nl + 1) .. " líneas)") or src
+        state.serverSrc = src
+        notify(("GOY\nCargado %s · %d líneas. Toca Analizar."):format(path, nl + 1))
+    end)
+    clearSrvBtn.MouseButton1Click:Connect(function()
+        serverBox.Text = ""; state.serverSrc = ""; state.events = {}; state.serverPlain = ""; state.selectedKey = nil; state.dirty = true
     end)
     copyFixBtn.MouseButton1Click:Connect(function()
         if state.serverCopy and state.serverCopy ~= "" then copy(state.serverCopy, "Servidor") else notify("GOY\nAnaliza o corrige primero") end
