@@ -11242,11 +11242,15 @@ task.spawn(function()
     local CONFIG_URL = "https://raw.githubusercontent.com/eduardomorfin58-ux/Ree/main/GOY_RemoteSpr/ia_config.json"
     local CONFIG_LOCAL = "GOY_IA_config.json"   -- si existe en tu ejecutor, manda sobre el de GitHub
     local DEFAULT_AI_URL = "https://text.pollinations.ai/openai"  -- IA pública sin clave (respaldo)
+    local DEFAULT_AI_GET = "https://text.pollinations.ai/"
     local AI_SYSTEM = "Eres la IA de GOY, un asistente experto en Roblox Luau, dentro de un panel de chat. "
         .. "Responde siempre en español, claro y directo, como un buen compañero programador: primero la respuesta, luego lo necesario. "
         .. "Puedes conversar, responder preguntas, explicar señales que el servidor envió al jugador, y revisar, corregir o escribir código que el usuario te pida. "
         .. "Cuando des código, ponlo completo dentro de un solo bloque ```lua ... ``` sin partes omitidas, y después explica en 1 a 3 líneas qué cambiaste. "
         .. "En Scripts del servidor del propio usuario añade validaciones de tipos, rangos, cooldown y dueño. "
+        .. "Reglas para que el código funcione a la primera: usa Luau moderno de Roblox (task.wait/task.spawn, game:GetService, :WaitForChild para lo que tarda en cargar), "
+        .. "nada de funciones obsoletas (wait, spawn, delay), protege con pcall lo que puede fallar, revisa que cada function/if/for cierre con end, "
+        .. "di dónde va (LocalScript, Script o ModuleScript y en qué carpeta), y no inventes nombres del juego: si no los sabes, ponlos como variables arriba para que el usuario los cambie. "
         .. "Usa **negrita** solo para lo importante. Si algo no está claro, pregunta una sola cosa."
     --------------------------------------
 
@@ -11875,21 +11879,37 @@ task.spawn(function()
         data.format = data.format or (string.find(data.aiUrl, "/openai") and "openai" or "goy")
         state.config, state.configErr = data, nil
     end
+    local function getReq()
+        return (syn and syn.request) or http_request or request or (http and http.request) or (fluxus and fluxus.request)
+    end
+    -- Hace la petición y reintenta 2 veces si hay fallo de red, 429 o 5xx.
+    local function httpSend(opts)
+        local req = getReq()
+        if type(req) ~= "function" then return nil, "Tu ejecutor no permite peticiones HTTP", 0 end
+        local lastErr, lastCode = "Error de red", 0
+        for attempt = 1, 3 do
+            local ok, res = pcall(req, opts)
+            if ok and type(res) == "table" then
+                local code = tonumber(res.StatusCode) or 200
+                if code < 400 then return res.Body or "", nil, code end
+                lastCode = code
+                lastErr = "HTTP " .. code
+                if not (code == 429 or code >= 500) then break end
+            end
+            if attempt < 3 then task.wait(1.2 * attempt) end
+        end
+        return nil, lastErr, lastCode
+    end
     local function httpPost(url, body)
-        local req = (syn and syn.request) or http_request or request or (http and http.request)
-        if type(req) ~= "function" then return nil, "Tu ejecutor no permite peticiones HTTP" end
-        local ok, res = pcall(req, {Url = url, Method = "POST",
-            Headers = {["Content-Type"] = "application/json"}, Body = body})
-        if not ok then return nil, "Error de red" end
-        if type(res) ~= "table" then return nil, "Respuesta vacía" end
-        if res.StatusCode and res.StatusCode >= 400 then
-            local code = res.StatusCode
+        local out, err, code = httpSend({Url = url, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = body})
+        if out then return out, nil end
+        if code == 0 then return nil, err end
+        do
             local why = (code == 402 or code == 429) and "la IA gratis pública bloqueó tu conexión (límite). Pon la URL de tu worker en ia_config.json"
                 or (code == 401 or code == 403) and "tu worker rechazó la petición (revisa la clave guardada en el worker)"
                 or "el servidor de la IA falló"
             return nil, ("HTTP %d: %s"):format(code, why)
         end
-        return res.Body or "", nil
     end
     local aiMemory = {}
     local KIND_PREFIX = {
@@ -11910,6 +11930,17 @@ task.spawn(function()
             payload = HttpService:JSONEncode({kind = kind, message = text, game = tostring(game.PlaceId), user = me.Name, history = aiMemory})
         end
         local body, err = httpPost(cfg.aiUrl, payload)
+        if not body and cfg.aiUrl == DEFAULT_AI_URL then
+            -- Respaldo: misma IA pública por otra ruta (texto plano).
+            local prompt = (KIND_PREFIX[kind] or "") .. text
+            if #prompt > 1800 then prompt = prompt:sub(1, 1800) end
+            local okE, q = pcall(function() return HttpService:UrlEncode(prompt) end)
+            local okS, sys = pcall(function() return HttpService:UrlEncode(AI_SYSTEM) end)
+            if okE and okS then
+                local alt = httpSend({Url = DEFAULT_AI_GET .. q .. "?model=openai&referrer=goy&system=" .. sys, Method = "GET"})
+                if alt and alt ~= "" then body, err = alt, nil end
+            end
+        end
         if not body then return nil, err end
         local reply
         local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
@@ -12253,6 +12284,16 @@ task.spawn(function()
         end
         return parts
     end
+    local function firstBrokenBlock(reply)
+        if type(loadstring) ~= "function" then return nil end
+        for _, part in ipairs(splitReply(reply)) do
+            if part.kind == "code" then
+                local okC, fn, e = pcall(loadstring, part.body)
+                if not okC or not fn then return part.body, tostring((not okC) and fn or e) end
+            end
+        end
+        return nil
+    end
     local function typewrite(label)
         -- Animación de escritura (revela el texto poco a poco).
         task.spawn(function()
@@ -12303,6 +12344,18 @@ task.spawn(function()
             BackgroundColor3 = IAC.chip, TextColor3 = C.text, Font = Enum.Font.GothamMedium, TextSize = 11, BorderSizePixel = 0}, top)
         round(cp, 6)
         cp.MouseButton1Click:Connect(function() copy(code, "Código") ; cp.Text = "Copiado" ; task.delay(1.5, function() cp.Text = "Copiar código" end) end)
+        local badge = top:FindFirstChildOfClass("TextLabel")
+        local compiles, cerr = true, nil
+        if type(loadstring) == "function" then
+            local okC, fnOrNil, e = pcall(loadstring, code)
+            compiles = okC and fnOrNil ~= nil
+            cerr = (not okC) and tostring(fnOrNil) or e
+        end
+        if badge and type(loadstring) == "function" then
+            badge.Text = compiles and "lua · compila bien" or ("lua · error: " .. tostring(cerr):gsub("^%[.-%]:", "línea "))
+            badge.TextColor3 = compiles and Color3.fromRGB(110, 220, 140) or Color3.fromRGB(240, 110, 130)
+            badge.TextTruncate = Enum.TextTruncate.AtEnd
+        end
         local lbl = new("TextLabel", {Text = colorize(code), RichText = true, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y,
             Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12,
             TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2}, box)
@@ -12369,6 +12422,15 @@ task.spawn(function()
         end)
         task.spawn(function()
             local reply, err = askAI(kind, text)
+            -- Si el código que dio no compila, se lo devuelve a la IA una vez para que lo arregle.
+            if reply then
+                local broken, cerr = firstBrokenBlock(reply)
+                if broken then
+                    kind = "fix_code"
+                    local fixed = askAI("fix_code", ("Tu código tiene este error de sintaxis: %s\nArréglalo y devuélvelo completo en un solo bloque ```lua.\n```lua\n%s\n```"):format(cerr, broken))
+                    if fixed and not firstBrokenBlock(fixed) then reply = fixed end
+                end
+            end
             busy = false
             thinking.Visible = false
             iaSend.Text = "Enviar"
