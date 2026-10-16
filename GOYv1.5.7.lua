@@ -11876,6 +11876,26 @@ task.spawn(function()
         end
         step(("Revisé los manejadores de remoto (OnServerEvent/OnServerInvoke): %d."):format(nHandlers))
 
+        -- 7) también se busca lo que conecta con el cliente (OnClientEvent, FireClient...)
+        local clientLines, nClient = {}, 0
+        local clientPats = {
+            {"OnClientEvent", "escucha del cliente"},
+            {"OnClientInvoke", "respuesta del cliente"},
+            {"FireClient", "el servidor envía a UN jugador"},
+            {"FireAllClients", "el servidor envía a TODOS"},
+        }
+        for _, cp in ipairs(clientPats) do
+            local c = select(2, src:gsub(cp[1] .. "%f[^%w]", ""))
+            if c > 0 then nClient = nClient + 1; clientLines[#clientLines + 1] = ("  %s: %d (%s)"):format(cp[1], c, cp[2]) end
+        end
+        for remote, how in src:gmatch("([%w_]+)%s*[:%.]%s*(Fire%a*Clients?)%f[^%w]") do
+            clientLines[#clientLines + 1] = ("    -> %s usa %s"):format(remote, how)
+        end
+        for remote in src:gmatch("([%w_]+)%s*%.%s*OnClientEvent") do
+            clientLines[#clientLines + 1] = ("    -> %s escucha OnClientEvent"):format(remote)
+        end
+        step(("Busqué lo que conecta con el cliente (OnClientEvent/FireClient/FireAllClients): %d tipos."):format(nClient))
+
         local out = {"-- Análisis estático (de texto) del Script del servidor", "", "Proceso (lo que hizo el análisis, paso a paso):"}
         for _, l in ipairs(proc) do out[#out + 1] = l end
         out[#out + 1] = ""
@@ -11889,6 +11909,10 @@ task.spawn(function()
         out[#out + 1] = ""
         out[#out + 1] = ("Manejadores de remoto encontrados: %d (OnServerEvent/OnServerInvoke)"):format(nHandlers)
         for _, l in ipairs(handlerLines) do out[#out + 1] = l end
+        out[#out + 1] = ""
+        out[#out + 1] = "Conexión con el cliente (OnClientEvent / FireClient / FireAllClients):"
+        if #clientLines == 0 then out[#out + 1] = "  (no se encontró ninguno)" end
+        for _, l in ipairs(clientLines) do out[#out + 1] = l end
         out[#out + 1] = ""
         out[#out + 1] = "Nota: es revisión de texto, no ejecuta el código. Usa 'Corregir código' para una versión con los arreglos aplicados."
         return table.concat(out, "\n"), info
@@ -12152,6 +12176,8 @@ task.spawn(function()
             for n in src:gmatch("[%w_%.:%(%)\"']-([%w_]+)%.OnServer%a+") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
             for n in src:gmatch("WaitForChild%(%s*[\"']([^\"']+)[\"']") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
             for n in src:gmatch("Instance%.new%(%s*[\"']Remote%a+[\"']%s*[^\n]-\n[^\n]-%.Name%s*=%s*[\"']([^\"']+)") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
+            for n in src:gmatch("([%w_]+)%s*%.%s*OnClientEvent") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
+            for n in src:gmatch("([%w_]+)%s*[:%.]%s*Fire%a*Clients?%f[^%w]") do if not seen[n] then seen[n] = true; names[#names + 1] = n end end
             if #names > 0 then parts[#parts + 1] = "Nombres usados en su código: " .. table.concat(names, ", ") end
             local code = #src > 60000 and (src:sub(1, 60000) .. "\n-- (recortado)") or src
             parts[#parts + 1] = "Código del juego del usuario (pegado por él en la pestaña Servidor). Úsalo para que lo que escribas encaje con sus nombres y remotos:\n```lua\n" .. code .. "\n```"
@@ -12176,6 +12202,10 @@ task.spawn(function()
         if not state.config then loadConfig() end
         if not state.config then return nil, state.configErr or "Sin config de IA" end
         local cfg = state.config
+        if cfg.aiUrl == DEFAULT_AI_URL and kind ~= "continue" and #text > CTX_MAX_PUBLIC then
+            local _, nl = text:gsub("\n", "")
+            return nil, ("tu mensaje tiene %d líneas (%d car.) y la IA gratis solo acepta unos %d car. por mensaje. Envíalo por partes o usa tu worker de Gemini, que acepta el código completo."):format(nl + 1, #text, CTX_MAX_PUBLIC)
+        end
         local payload
         if cfg.format == "openai" then
             local msgs = {{role = "system", content = AI_SYSTEM}}
@@ -12630,14 +12660,24 @@ task.spawn(function()
         local lines = {}
         for l in (code .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = l end
         if badge and #lines > 40 then badge.Text = badge.Text .. (" · %d líneas"):format(#lines) end
-        local first
-        for i = 1, #lines, 120 do
+        local function chunkAt(i)
             local chunk = table.concat(lines, "\n", i, math.min(i + 119, #lines))
-            local lbl = new("TextLabel", {Text = colorize(chunk), RichText = true, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y,
+            return new("TextLabel", {Text = colorize(chunk), RichText = true, TextWrapped = true, AutomaticSize = Enum.AutomaticSize.Y,
                 Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, TextColor3 = C.text, Font = Enum.Font.Code, TextSize = 12,
                 TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = 2 + i}, box)
-            first = first or lbl
-            if i % 1200 == 1 and i > 1 then task.wait() end
+        end
+        local first = chunkAt(1)
+        if #lines > 120 then
+            -- El resto se dibuja en segundo plano, de 10 en 10 trozos, para no congelar el juego.
+            task.spawn(function()
+                local made = 0
+                for i = 121, #lines, 120 do
+                    if not box.Parent then break end
+                    pcall(chunkAt, i)
+                    made = made + 1
+                    if made % 10 == 0 then task.wait() end
+                end
+            end)
         end
         return first, #lines
     end
@@ -12645,8 +12685,9 @@ task.spawn(function()
         local row = addRow()
         local b = bubble(row, true, IAC.me)
         if #text > 600 or text:find("\n.*\n.*\n") then
-            textIn(b, "<i>Código enviado (" .. #text .. " car.)</i>", 1)
-            codeIn(b, #text > 1500 and (text:sub(1, 1500) .. "\n-- …") or text, 2)
+            local _, nl = text:gsub("\n", "")
+            textIn(b, ("<i>Código enviado (%d líneas, %d car.)</i>"):format(nl + 1, #text), 1)
+            codeIn(b, text, 2)
         else
             textIn(b, md(text), 1, Color3.new(1, 1, 1))
         end
