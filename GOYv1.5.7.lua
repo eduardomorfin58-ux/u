@@ -11241,6 +11241,10 @@ task.spawn(function()
     -- Config de la IA (solo URLs, SIN claves). Puedes cambiar CONFIG_URL por el tuyo.
     local CONFIG_URL = "https://raw.githubusercontent.com/eduardomorfin58-ux/Ree/main/GOY_RemoteSpr/ia_config.json"
     local CONFIG_LOCAL = "GOY_IA_config.json"   -- si existe en tu ejecutor, manda sobre el de GitHub
+    local DEFAULT_AI_URL = "https://text.pollinations.ai/openai"  -- IA pública sin clave (respaldo)
+    local AI_SYSTEM = "Eres la IA de GOY dentro de Roblox. Respondes en español, corto y claro. "
+        .. "Ayudas con Luau: explicar señales recibidas del servidor, revisar y corregir Scripts del servidor del propio usuario "
+        .. "(validar tipos, rangos, cooldown y dueño). Cuando corrijas código devuelve el código completo."
     --------------------------------------
 
     local C = {
@@ -11404,6 +11408,7 @@ task.spawn(function()
     end
     -- Pseudo-código (solo lectura) de lo que LLEGÓ por OnClientEvent. No es ejecutable.
     local function codeOf(g)
+        if g.custom then return g.custom end
         local tag = g.zone == "Mías" and "Mía" or (g.zone == "Otros" and "Otro jugador" or "General")
         local who = #g.players > 0 and (" · " .. table.concat(g.players, ", ")) or ""
         local names = {}
@@ -11507,16 +11512,162 @@ task.spawn(function()
         if ok and conn then state.conns[remote] = conn end
     end
     local function isRemote(d) return d:IsA("RemoteEvent") or d:IsA("UnreliableRemoteEvent") end
-    local ROOTS = {game:GetService("ReplicatedStorage"), workspace, me}
+    -- Todo lo que el servidor replica y tu cliente puede ver (sin CoreGui).
+    local ROOT_NAMES = {"ReplicatedStorage", "ReplicatedFirst", "Workspace", "Players", "Lighting", "Teams", "SoundService", "StarterGui", "StarterPack"}
+    local function getRoots()
+        local roots = {}
+        for _, n in ipairs(ROOT_NAMES) do
+            local ok, svc = pcall(function() return game:GetService(n) end)
+            if ok and svc then roots[#roots + 1] = svc end
+        end
+        return roots
+    end
+
+    ---- Cambios replicados (compras, monedas, inventario, atributos) ----
+    -- Una compra casi nunca llega por RemoteEvent: el servidor cambia valores
+    -- (leaderstats, Data, atributos) o te da una Tool. Aquí se registran esos
+    -- cambios, solo leyendo.
+    local CHANGE_RATE = 20
+    local changeSec, changeCount = os.clock(), 0
+    local function recordInfo(key, name, path, class, zone, lines, nargs)
+        if not state.listening or state.ignored[name] then return end
+        local now = os.clock()
+        if now - changeSec >= 1 then changeSec, changeCount = now, 0 end
+        changeCount = changeCount + 1
+        local g = state.groups[key]
+        if changeCount > CHANGE_RATE and g then g.count = g.count + 1; state.dropped = state.dropped + 1; return end
+        state.seq = state.seq + 1
+        if not g then
+            g = {key = key, zone = zone, name = name, class = class, path = path, players = {}, involvesMe = zone == "Mías",
+                 count = 0, variants = 0, first = os.date("%H:%M:%S"), rateStart = now, rateCount = 0, spam = false, args = {}}
+            state.groups[key] = g
+        end
+        g.count = g.count + 1
+        g.variants = g.variants + 1
+        g.nargs = nargs or 0
+        g.last = os.date("%H:%M:%S")
+        g.seq = state.seq
+        g.custom = table.concat(lines, "\n")
+        state.totals[zone] = state.totals[zone] + 1
+        state.dirty = true
+        touch(key)
+        recordButtonSignal(g)
+    end
+    local function short(v) local t = fmt(v); return #t > 120 and (t:sub(1, 120) .. "…") or t end
+    local function watchValue(v)
+        if not v:IsA("ValueBase") then return end
+        local last = v.Value
+        state.watchConns[#state.watchConns + 1] = v.Changed:Connect(function(newV)
+            local old = last; last = newV
+            local delta = ""
+            if type(old) == "number" and type(newV) == "number" then delta = ("  (%+g)"):format(newV - old) end
+            recordInfo("val|" .. pathOf(v), "Cambio: " .. v.Name, pathOf(v), v.ClassName, "Mías", {
+                ("-- Cambio replicado: %s · %s"):format(v.Name, os.date("%H:%M:%S")),
+                ("local valor = %s"):format(pathOf(v)),
+                ("-- antes: %s"):format(short(old)),
+                ("-- ahora: %s%s"):format(short(newV), delta),
+            }, 2)
+        end)
+    end
+    local function watchAttributes(inst, label)
+        state.watchConns[#state.watchConns + 1] = inst.AttributeChanged:Connect(function(attr)
+            local val = inst:GetAttribute(attr)
+            recordInfo("attr|" .. label .. "|" .. attr, "Atributo: " .. attr, pathOf(inst), "Attribute", "Mías", {
+                ("-- Atributo cambiado: %s · %s"):format(attr, os.date("%H:%M:%S")),
+                ("local obj = %s"):format(pathOf(inst)),
+                ("-- %s = %s"):format(attr, short(val)),
+            }, 1)
+        end)
+    end
+    local function watchContainer(container, label)
+        if not container then return end
+        state.watchConns[#state.watchConns + 1] = container.ChildAdded:Connect(function(c)
+            recordInfo("add|" .. label .. "|" .. c.Name, "Recibido: " .. c.Name, pathOf(c), c.ClassName, "Mías", {
+                ("-- Nuevo en %s · %s"):format(label, os.date("%H:%M:%S")),
+                ("local obj = %s  -- %s"):format(pathOf(c), c.ClassName),
+            }, 1)
+        end)
+        state.watchConns[#state.watchConns + 1] = container.ChildRemoved:Connect(function(c)
+            recordInfo("rem|" .. label .. "|" .. c.Name, "Quitado: " .. c.Name, label, c.ClassName, "Mías", {
+                ("-- Quitado de %s · %s"):format(label, os.date("%H:%M:%S")),
+                ("-- %s (%s)"):format(c.Name, c.ClassName),
+            }, 1)
+        end)
+    end
+    local function startChangeWatch()
+        -- Valores dentro de tu Player (leaderstats, Data, Inventory, etc.)
+        for _, d in ipairs(me:GetDescendants()) do
+            if d:IsA("ValueBase") and not d:FindFirstAncestorOfClass("PlayerGui") then watchValue(d) end
+        end
+        state.watchConns[#state.watchConns + 1] = me.DescendantAdded:Connect(function(d)
+            if state.listening and d:IsA("ValueBase") and not d:FindFirstAncestorOfClass("PlayerGui") then watchValue(d) end
+        end)
+        watchAttributes(me, "Player")
+        -- Inventario: Backpack y lo que te pongan en el personaje.
+        local backpack = me:FindFirstChildOfClass("Backpack")
+        watchContainer(backpack, "Backpack")
+        local function onChar(ch)
+            if not ch then return end
+            watchAttributes(ch, "Character")
+            state.watchConns[#state.watchConns + 1] = ch.ChildAdded:Connect(function(c)
+                if c:IsA("Tool") or c:IsA("Accessory") then
+                    recordInfo("char|" .. c.Name, "Equipado: " .. c.Name, pathOf(c), c.ClassName, "Mías", {
+                        ("-- Nuevo en tu personaje · %s"):format(os.date("%H:%M:%S")),
+                        ("local obj = %s  -- %s"):format(pathOf(c), c.ClassName),
+                    }, 1)
+                end
+            end)
+        end
+        onChar(me.Character)
+        state.watchConns[#state.watchConns + 1] = me.CharacterAdded:Connect(onChar)
+        state.watchConns[#state.watchConns + 1] = me.ChildAdded:Connect(function(c)
+            if c:IsA("Backpack") then watchContainer(c, "Backpack") end
+        end)
+        -- Compras con Robux (MarketplaceService): resultado que confirma el servidor de Roblox.
+        local okM, MPS = pcall(function() return game:GetService("MarketplaceService") end)
+        if okM and MPS then
+            local function purchase(kind, id, done)
+                recordInfo("buy|" .. kind .. "|" .. tostring(id), "Compra: " .. kind .. " " .. tostring(id), "MarketplaceService", "Purchase", "Mías", {
+                    ("-- Compra %s · %s"):format(kind, os.date("%H:%M:%S")),
+                    ("-- id = %s"):format(tostring(id)),
+                    ("-- completada = %s"):format(tostring(done)),
+                }, 2)
+            end
+            pcall(function() state.watchConns[#state.watchConns + 1] = MPS.PromptPurchaseFinished:Connect(function(p, id, done) if p == me then purchase("Item", id, done) end end) end)
+            pcall(function() state.watchConns[#state.watchConns + 1] = MPS.PromptProductPurchaseFinished:Connect(function(uid, id, done) if uid == me.UserId then purchase("Producto", id, done) end end) end)
+            pcall(function() state.watchConns[#state.watchConns + 1] = MPS.PromptGamePassPurchaseFinished:Connect(function(p, id, done) if p == me then purchase("GamePass", id, done) end end) end)
+        end
+        -- Objetos nuevos en el mapa que llevan tu nombre (lo que compras y aparece).
+        state.watchConns[#state.watchConns + 1] = workspace.DescendantAdded:Connect(function(d)
+            if not state.listening then return end
+            local okA, own = pcall(function()
+                local a = d:GetAttribute("Owner") or d:GetAttribute("owner") or d:GetAttribute("OwnerId")
+                if a == me.Name or a == me.UserId then return true end
+                return d.Parent and (d.Parent.Name == me.Name or d.Parent.Name == tostring(me.UserId)) and d:IsA("Model")
+            end)
+            if okA and own then
+                recordInfo("ws|" .. d.Name, "Aparece: " .. d.Name, pathOf(d), d.ClassName, "Mías", {
+                    ("-- Objeto tuyo apareció · %s"):format(os.date("%H:%M:%S")),
+                    ("local obj = %s  -- %s"):format(pathOf(d), d.ClassName),
+                }, 1)
+            end
+        end)
+    end
+
     local function startListening()
         if state.listening then return end
         state.listening = true
-        for _, root in ipairs(ROOTS) do
-            for _, d in ipairs(root:GetDescendants()) do if isRemote(d) then hook(d) end end
-            state.watchConns[#state.watchConns + 1] = root.DescendantAdded:Connect(function(d)
-                if state.listening and isRemote(d) then hook(d) end
+        for _, root in ipairs(getRoots()) do
+            pcall(function()
+                for _, d in ipairs(root:GetDescendants()) do if isRemote(d) then hook(d) end end
+            end)
+            pcall(function()
+                state.watchConns[#state.watchConns + 1] = root.DescendantAdded:Connect(function(d)
+                    if state.listening and isRemote(d) then hook(d) end
+                end)
             end)
         end
+        pcall(startChangeWatch)
         state.dirty = true
     end
     local function stopListening()
@@ -11704,11 +11855,21 @@ task.spawn(function()
             local ok, body = pcall(function() return game:HttpGet(CONFIG_URL) end)
             if ok and type(body) == "string" and #body > 0 and not body:find("^404") then raw = body end
         end
-        if not raw then state.configErr = "Sin config (crea " .. CONFIG_LOCAL .. " o sube ia_config.json a tu GitHub)"; return end
-        local ok, data = pcall(function() return HttpService:JSONDecode(raw) end)
-        if not ok or type(data) ~= "table" or type(data.aiUrl) ~= "string" or data.aiUrl == "" then
-            state.configErr = "Config inválida: falta aiUrl"; return
+        local data
+        if raw then
+            local ok, decoded = pcall(function() return HttpService:JSONDecode(raw) end)
+            if ok and type(decoded) == "table" then data = decoded end
         end
+        data = data or {}
+        -- Sin URL propia -> IA pública gratuita sin clave (formato OpenAI).
+        if type(data.aiUrl) ~= "string" or data.aiUrl == "" then
+            data.aiUrl = DEFAULT_AI_URL
+            data.format = "openai"
+        end
+        if not string.find(data.aiUrl, "^https://") then
+            state.configErr = "aiUrl debe empezar con https://"; return
+        end
+        data.format = data.format or (string.find(data.aiUrl, "/openai") and "openai" or "goy")
         state.config, state.configErr = data, nil
     end
     local function httpPost(url, body)
@@ -11721,15 +11882,39 @@ task.spawn(function()
         if res.StatusCode and res.StatusCode >= 400 then return nil, "HTTP " .. tostring(res.StatusCode) end
         return res.Body or "", nil
     end
+    local aiMemory = {}
+    local KIND_PREFIX = {
+        chat = "", fix_code = "Corrige este código y devuélvelo completo:\n",
+        analyze_signal = "Explica qué significa esta señal que el servidor me envió:\n",
+    }
     local function askAI(kind, text)
         if not state.config then loadConfig() end
         if not state.config then return nil, state.configErr or "Sin config de IA" end
-        local payload = HttpService:JSONEncode({kind = kind, message = text, game = tostring(game.PlaceId), user = me.Name})
-        local body, err = httpPost(state.config.aiUrl, payload)
+        local cfg = state.config
+        local payload
+        if cfg.format == "openai" then
+            local msgs = {{role = "system", content = AI_SYSTEM}}
+            for _, m in ipairs(aiMemory) do msgs[#msgs + 1] = m end
+            msgs[#msgs + 1] = {role = "user", content = (KIND_PREFIX[kind] or "") .. text}
+            payload = HttpService:JSONEncode({model = cfg.model or "openai", messages = msgs})
+        else
+            payload = HttpService:JSONEncode({kind = kind, message = text, game = tostring(game.PlaceId), user = me.Name})
+        end
+        local body, err = httpPost(cfg.aiUrl, payload)
         if not body then return nil, err end
+        local reply
         local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
-        if ok and type(data) == "table" and data.reply then return tostring(data.reply) end
-        return body
+        if ok and type(data) == "table" then
+            if data.reply then reply = tostring(data.reply)
+            elseif type(data.choices) == "table" and data.choices[1] and data.choices[1].message then
+                reply = tostring(data.choices[1].message.content or "")
+            end
+        end
+        reply = reply or body
+        aiMemory[#aiMemory + 1] = {role = "user", content = text}
+        aiMemory[#aiMemory + 1] = {role = "assistant", content = reply}
+        while #aiMemory > 8 do table.remove(aiMemory, 1) end
+        return reply
     end
 
     ---------------- Reportes ----------------
@@ -11737,7 +11922,7 @@ task.spawn(function()
         local lines = {
             "-- GOY Remote Spy: reporte (no ejecutable)",
             "Remote: " .. g.name, "Clase: " .. g.class, "Ruta: " .. g.path,
-            "Dirección: OnClientEvent (servidor -> tu cliente)",
+            "Dirección: " .. (g.custom and "Cambio replicado por el servidor" or "OnClientEvent (servidor -> tu cliente)"),
             "Zona: " .. g.zone,
             "Jugadores: " .. (#g.players > 0 and table.concat(g.players, ", ") or "-") .. (g.involvesMe and " (te involucra)" or ""),
             ("Veces: %d | Variantes: %d | Args: %d | Primera: %s | Última: %s"):format(g.count, g.variants, g.nargs or 0, g.first, g.last),
@@ -11978,7 +12163,7 @@ task.spawn(function()
         iaGui.Enabled = not iaGui.Enabled
         if iaGui.Enabled and #iaHistory == 0 then
             loadConfig()
-            iaAppend("IA", state.config and ("Conectada. " .. (state.config.displayName or "IA lista.")) or ("Sin conexión: " .. tostring(state.configErr)), "9ece6a")
+            iaAppend("IA", state.config and ((state.config.aiUrl == DEFAULT_AI_URL) and "Conectada (IA pública gratis). Escríbeme." or ("Conectada a tu worker. " .. (state.config.displayName or ""))) or ("Sin conexión: " .. tostring(state.configErr)), "9ece6a")
         end
     end)
     SHARED.openIA = function() iaGui.Enabled = true end
