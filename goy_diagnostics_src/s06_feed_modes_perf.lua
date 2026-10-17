@@ -49,6 +49,10 @@ local FEED_KINDS = {
         FEED.serverMode = m.mode
         return "Sistema", STR.MSG.SERVER_MODE, "", not m.ok
     end,
+    TP = function(m)
+        if FEED.onTp then FEED.onTp(m.ok, tostring(m.msg or "")) end
+        return "Sistema", "TP", "", not m.ok
+    end,
 }
 
 function FEED.onMessage(e, ...)
@@ -58,7 +62,7 @@ function FEED.onMessage(e, ...)
     REG.remoteVersion = REG.remoteVersion + 1
     local m = FEED.parse(...)
     local handler = FEED_KINDS[m.kind]
-    local isControl = m.kind == "Mode" or m.kind == "Dropped"
+    local isControl = m.kind == "Mode" or m.kind == "Dropped" or m.kind == "TP"
     if not isControl and not RATE.ok(e, STR.MSG.FEED_RATE, CONFIG.RATE_FEED) then return end
     if m.userId then FEED.names[m.userId] = m.player end
     if m.kind == "OnServerEvent" or m.kind == "OnServerInvoke" then FEED.count(m) end
@@ -101,6 +105,16 @@ REG.specials[CONFIG.MODE_REMOTE] = function(e, inst)
     FEED.modeRemote = inst
     task.defer(function() FEED.sendMode() end)
     return nil -- solo se usa para pedir el modo; no se escucha
+end
+
+REG.specials[CONFIG.TP_REMOTE] = function(e, inst)
+    FEED.tpRemote = inst
+    return nil -- solo se usa para pedir TP en TU juego; no se escucha
+end
+-- TP por UserId: lo hace tu script de Studio (valida autorización y 1 TP/s).
+function FEED.tp(userId)
+    if not FEED.tpRemote then return false end
+    return (pcall(function() FEED.tpRemote:FireServer({userId = userId}) end))
 end
 
 function FEED.label(v)
