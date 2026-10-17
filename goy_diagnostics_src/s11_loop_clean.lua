@@ -29,14 +29,7 @@ end
 local function needsSample(now)
     if not PERF.due(now) then return false end
     if MODE.def.alertsOnly or MODE.def.silent then return true end
-    return UI.open and (UI.tab == "MAIN" or UI.tab == "PERFORMANCE")
-end
-
-local function updateFooter()
-    local left = MODE.captureLeft()
-    local modeTxt = MODE.def.label .. (left and (" " .. string.format(STR.CAPTURE_LEFT, left)) or "")
-    footer.Text = string.format(STR.FOOTER, LOG.paused and HEX.warn or HEX.ok, LOG.paused and STR.PAUSED or STR.LIVE,
-        modeTxt, FEED.label(), #REG.remotes, LOG.total, LOG.suppressed > 0 and string.format(STR.SPAM_SUFFIX, LOG.suppressed) or "", PERF.fps)
+    return UI.open -- las tarjetas de métricas se ven en todas las pestañas
 end
 
 local function renderTab(tab, now)
@@ -63,15 +56,20 @@ local function tick()
         PERF.renderRate = PERF.renderWinCount / (now - PERF.renderWin)
         PERF.renderWin, PERF.renderWinCount = now, 0
     end
+    PERF.tickEvents(now)
     if needsSample(now) then PERF.sample() end
     local drawing = MODE.drawAllowed()
     fabDot.BackgroundColor3 = (MODE.def.silent and MODE.alertPending) and TH.bad or (LOG.paused and TH.warn or TH.ok)
     if not drawing then return end  -- Silencioso: no se dibuja nada hasta una alerta
     UI.refreshControls(UI.controlLabels())
     if not UI.open or UI.collapsed then return end
-    updateFooter()
     local tab = UI.tab
+    local forced = UI.force
     if needsRender(tab, now) then renderTab(tab, now) end
+    if forced or now - (LOOP.lastChrome or 0) >= CONFIG.REFRESH.MAIN * (MODE.def.tickMul or 1) then
+        LOOP.lastChrome = now
+        U.try("cromo", UI.renderChrome)
+    end
 end
 
 ---------------- Arranque
@@ -101,7 +99,7 @@ REG.watchAttributes(LP, STR.MSG.ATTR_PLAYER)
 onCharacter(LP.Character)
 U.conn(LP.CharacterAdded, onCharacter, "personaje")
 G.UI, G.REG, G.LOG, G.PERF, G.CAP, G.FEED, G.MODE, G.CFG, G.CONFIG, G.STR = UI, REG, LOG, PERF, CAP, FEED, MODE, CFG, CONFIG, STR
-UI.setTab(UI.pages[CFG.get("tab", "MAIN")] and CFG.get("tab", "MAIN") or "MAIN")
+UI.setTab(UI.pages[CFG.get("tab", "LOGS")] and CFG.get("tab", "LOGS") or "LOGS")
 LOG.add("Sistema", "GOY Diagnostics", "", "", nil, string.format(STR.MSG.START, CONFIG.VERSION, CAP.executor))
 task.spawn(REG.initialScan)
 task.spawn(function()
