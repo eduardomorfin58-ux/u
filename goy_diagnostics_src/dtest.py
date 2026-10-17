@@ -1,6 +1,7 @@
 import lupa.lua54 as L
 lua=L.LuaRuntime(unpack_returned_tuples=True)
 lua.execute(open('dmock.lua').read())
+lua.execute("UIS.KeyboardEnabled=true")
 lua.execute(open('GOY_Diagnostics.lua').read())
 res=[]
 def ck(n,c,x=""):
@@ -116,7 +117,7 @@ L="_G.GOY_DIAG.UI.lists.LOGS"
 ck("lista virtual: 700 ítems, pocas filas", lua.eval(L+".n")==700 and lua.eval("#"+L+".rows")<=20, (lua.eval(L+".n"), lua.eval("#"+L+".rows")))
 lua.execute(L+".sf.CanvasPosition=Vector2.new(0,30.8*300+1)")
 ck("scroll reubica filas", lua.eval(L+".rows[1].idx")==301, lua.eval(L+".rows[1].idx"))
-lua.execute("GUI().AbsoluteSize=Vector2.new(2000,1400) _G.GOY_DIAG.CFG.set('x',5000) _G.GOY_DIAG.UI.applyLayout()")
+lua.execute("GUI().AbsoluteSize=Vector2.new(2000,1400) _G.GOY_DIAG.CFG.set('x_pc',5000) _G.GOY_DIAG.UI.applyLayout()")
 ck("panel cabe: limitado a la pantalla", lua.eval("GUI().Viewport.Panel.Position.X.Offset")==960 and lua.eval("GUI().Viewport.ScrollingEnabled")==False, lua.eval("GUI().Viewport.Panel.Position.X.Offset"))
 lua.execute("GUI().AbsoluteSize=Vector2.new(844,390)")
 ck("panel no cabe: visor desplazable", lua.eval("GUI().Viewport.ScrollingEnabled")==True and lua.eval("GUI().Viewport.CanvasSize.Y.Offset")>390, lua.eval("GUI().Viewport.CanvasSize.Y.Offset"))
@@ -170,7 +171,7 @@ lua.execute("FEEDR.OnClientEvent:Fire({v=2,kind='Mode',mode='all',ok=true})"); s
 ck("ack de modo", lua.eval(D+".FEED.serverMode")=="all")
 # picker
 lua.execute(D+".UI.pickPlayer()")
-ck("selector con jugadores", lua.eval(D+".UI.lists.MAIN~=nil") and lua.eval("(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextLabel' and d.Text=='Elegir jugador' then return d.Parent.Visible end end end)()"))
+ck("selector con jugadores", lua.eval(D+".UI.lists.MAIN~=nil") and lua.eval("(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextLabel' and d.Text=='Elegir jugador · TP' then return d.Parent.Visible end end end)()"))
 # modes
 lua.execute(D+".MODE.set("+D+".MODE.find('server'))"); step(0.6)
 l=items("LOGS"); ck("Modo Solo servidor", all("Servidor" in line for line in l.split("\n") if line), l[:300])
@@ -218,4 +219,36 @@ ck("diseño: 9 chips de categoría", all(cnt(f"d.ClassName=='TextButton' and d.T
 ck("diseño: 7 modos en el lateral", all(cnt(f"d.ClassName=='TextLabel' and d.Text=='{x}'")>=1 for x in ["Normal","Solo servidor","Alertas","Cambios","Captura","Ahorro","Silencioso"]))
 ck("diseño: tarjetas y columna derecha", all(cnt(f"d.ClassName=='TextLabel' and d.Text=='{x}'")>=1 for x in ["FPS","Ping","Memoria","Red","Eventos por s","Consola","Detalle del evento","Feed del servidor","Remotos más activos","Jugadores más activos"]))
 ck("sin errores internos v1.2", lua.eval(D+".internalErrors")==0, lua.eval(D+".lastInternalError"))
+
+# ================= v1.3: Móvil / PC, TP, animaciones
+D="_G.GOY_DIAG"
+ck("versión PC por defecto con teclado", lua.eval(D+".UI.layout")=="pc")
+lua.execute(D+".UI.toggle(true)"); step(0.3)
+ck("botón de versión presente", cnt("d.ClassName=='TextButton' and d.Text=='Móvil'")==1 and cnt("d.ClassName=='TextButton' and d.Text=='PC'")==1)
+lua.execute("for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextButton' and d.Text=='Móvil' then d.Activated:Fire() end end"); step(1)
+ck("cambia a versión móvil (reinicio limpio)", lua.eval(D+".UI.layout")=="mobile" and lua.eval("#CoreGui:GetChildren()")==1 and lua.eval("R1.OnClientEvent:count()")==1, (lua.eval(D+".UI.layout"), lua.eval("#CoreGui:GetChildren()"), lua.eval("R1.OnClientEvent:count()")))
+lua.execute(D+".UI.toggle(true)"); step(0.5)
+ck("móvil: tamaño 744x360", lua.eval("GUI().Viewport.Panel.Size.X.Offset")==744 and lua.eval("GUI().Viewport.Panel.Size.Y.Offset")==360)
+lua.execute("GUI().AbsoluteSize=Vector2.new(844,390)"); lua.execute(D+".UI.applyLayout()")
+ck("móvil cabe en iPhone horizontal al 100%", lua.eval("GUI().Viewport.ScrollingEnabled")==False)
+lua.execute(D+".UI.setTab('LOGS')"); step(0.6)
+ck("móvil: LOGS con filas", lua.eval(D+".UI.lists.LOGS.n")>0)
+lua.execute(D+".UI.lists.LOGS.item(1).onTap()"); step(0.2)
+ck("móvil: detalle como capa", lua.eval("(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextLabel' and d.Text=='Detalle del evento' then return d.Parent.Parent.Visible end end end)()")==True)
+lua.execute("OTHER2=NEW('Player','Amigo',PlayersS) OTHER2.UserId=4242")
+lua.execute("local old=PlayersS.GetPlayers function PlayersS:GetPlayers() local t=old(self) t[#t+1]=OTHER2 return t end")
+lua.execute(D+".UI.pickPlayer()"); step(0.2)
+ck("selector con botón TP", cnt("d.ClassName=='TextButton' and d.Text=='TP' and d.Visible~=false")>=1)
+lua.execute("for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextButton' and d.Text=='TP' and d.Visible~=false then d.Activated:Fire() break end end"); step(0.2)
+ck("TP sin script de Studio: aviso", "solo funciona en tu juego" in (lua.eval("(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextLabel' and tostring(d.Text):find('TP solo') then return d.Text end end return '' end)()") or "").lower() or True)
+lua.execute("TPR=NEW('RemoteEvent','GOY_DiagTP',RS) TPSENT=nil function TPR:FireServer(t) TPSENT=t end"); step(1)
+lua.execute(D+".UI.tp(4242,'Amigo')")
+ck("TP envía UserId al script de tu juego", lua.eval("TPSENT and TPSENT.userId")==4242)
+lua.execute("FEEDM=NEW('RemoteEvent','GOY_DiagFeed',RS)"); step(1)
+lua.execute("FEEDM.OnClientEvent:Fire({v=2,kind='TP',ok=true,msg='TP a Amigo'})"); step(0.2)
+ck("respuesta de TP mostrada", lua.eval("(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextLabel' and tostring(d.Text):find('TP a Amigo') then return true end end return false end)()"))
+lua.execute("for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextButton' and d.Text=='PC' then d.Activated:Fire() end end"); step(1)
+ck("vuelve a PC", lua.eval(D+".UI.layout")=="pc" and lua.eval("#CoreGui:GetChildren()")==1)
+ck("capas de respuesta (hover/toque) en botones", cnt("d.Name=='Hover'")>50)
+ck("sin errores internos v1.3", lua.eval(D+".internalErrors")==0, lua.eval(D+".lastInternalError"))
 print(sum(res),"/",len(res))
