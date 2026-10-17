@@ -11382,7 +11382,7 @@ task.spawn(function()
             SPIN = {file = "f15_spin.png", cols = 6, rows = 6, frames = 36, size = 170, fps = 18},
             TRACTOR_IMG = "tractor.png",
             MESH = "f15_mesh.json",
-            TARGET_NAME = "tractor",      -- se compara sin mayúsculas/minúsculas
+            TARGET_NAME = "tractor",      -- cualquier nombre que contenga "tractor" (Tractor, TractorGreen…)
             LENGTH_FACTOR = 2.4,          -- largo del avión = lado mayor del tractor × este factor
             LIFT = 1.2,                   -- altura extra sobre el tractor (en studs)
         }
@@ -11565,7 +11565,7 @@ task.spawn(function()
         -- Encontrar tractores y esconderlos SOLO localmente (LocalTransparencyModifier).
         ------------------------------------------------------------
         local function isTractor(inst)
-            return (inst:IsA("Model") or inst:IsA("BasePart")) and string.lower(inst.Name) == F15.TARGET_NAME
+            return (inst:IsA("Model") or inst:IsA("BasePart")) and string.find(string.lower(inst.Name), F15.TARGET_NAME, 1, true) ~= nil
         end
         local function topTractor(inst)
             local top = inst
