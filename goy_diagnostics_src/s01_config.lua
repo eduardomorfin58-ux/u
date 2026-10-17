@@ -1,6 +1,6 @@
 --[[
 ================================================================================
- GOY DIAGNOSTICS v1.2  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
+ GOY DIAGNOSTICS v1.2 Pro  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
  Cliente Roblox · optimizado para iPhone + Delta
 --------------------------------------------------------------------------------
  QUÉ HACE (desde el cliente, sin tocar el juego):
@@ -28,6 +28,12 @@
    8 PERF · 9 UI · 10 PESTAÑAS · 11 BUCLE (+arranque) · 12 LIMPIEZA · 13 STUDIO
 --------------------------------------------------------------------------------
  CAMBIOS
+ v1.2 Pro · Interfaz rehecha según el diseño "GOY Diagnostics v1.2 Pro": panel
+        de 1040 × 1163 con barra de título, lateral (pestañas con contadores,
+        Jugadores, Modo, ejecutor), 6 tarjetas de métricas con mini gráficas,
+        búsqueda, chips, tabla de eventos, remotos/jugadores más activos,
+        gráfica de eventos/s, detalle del evento, feed del servidor y barra de
+        estado. Escalas exactas 65 % y 100 %; si no cabe, se recorre con un dedo.
  v1.2 · Feed del servidor estructurado (tipo, remoto, jugador, userId, args,
         tipos) con límite propio de 60/s · botón JUGADORES (Todos / Solo yo /
         Elegir…) filtrado en el servidor por GOY_DiagMode y también en el
@@ -50,7 +56,7 @@
 -- 1. CONFIG — todas las constantes en un solo lugar
 -------------------------------------------------------------------------------
 local CONFIG = {
-    VERSION = "1.2",
+    VERSION = "1.2 Pro",
 
     -- Registro
     LOG_MAX = 700,                 -- entradas en el búfer circular
@@ -88,28 +94,42 @@ local CONFIG = {
     MODES = {
         -- id, etiqueta, filtro de categorías, solo alertas, dibuja, multiplicador de refresco,
         -- muestreo de métricas (s), máximo de filas, gráfica, captura
-        {id = "normal",  label = "Normal",        tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "server",  label = "Solo servidor", cats = {Servidor = true}, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "alerts",  label = "Alertas",       alertsOnly = true, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "changes", label = "Cambios",       cats = {Valor = true, Cambio = true, Tool = true}, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "capture", label = "Captura",       capture = true, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "saver",   label = "Ahorro",        tickMul = 3, sampleEvery = 2, maxRows = 60, graph = false},
-        {id = "silent",  label = "Silencioso",    silent = true, tickMul = 3, sampleEvery = 2, graph = false},
+        {id = "normal",  label = "Normal", desc = "Todo el registro, como siempre",        tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "server",  label = "Solo servidor", desc = "Solo el feed y ServerStats", cats = {Servidor = true}, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "alerts",  label = "Alertas", desc = "Spam, errores, ping alto, FPS bajo",       alertsOnly = true, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "changes", label = "Cambios", desc = "Valores, atributos, tools, personaje",       cats = {Valor = true, Cambio = true, Tool = true}, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "capture", label = "Captura", desc = "Graba 30 s y resume",       capture = true, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "saver",   label = "Ahorro", desc = "Menos refresco, menos batería",        tickMul = 3, sampleEvery = 2, maxRows = 60, graph = false},
+        {id = "silent",  label = "Silencioso", desc = "No dibuja hasta que haya alerta",    silent = true, tickMul = 3, sampleEvery = 2, graph = false},
     },
 
-    -- Interfaz
-    TOUCH = 44,                    -- alto mínimo táctil (px)
-    HEADER_H = 52, TAB_BAR_H = 46, TOOLBAR_H = 48, FOOTER_H = 20, GAP = 4, MARGIN = 8,
-    TAB_W = 96, TAB_W_WIDE = 122,
-    ROW_H = 56, ROW_GAP = 5, ROW_SPARE = 3,
-    FAB_SIZE = 60,
-    PANEL_MIN_W = 300, PANEL_MIN_H = 240, PANEL_VP_W = 0.92, PANEL_VP_H = 0.86, SCREEN_PAD = 8,
+    -- Interfaz: medidas exactas del diseño (unidades del diseño; UIScale aplica 65 % o 100 %)
+    SCALES = {0.65, 1},
+    L = {
+        PANEL_W = 1040, PANEL_H = 1163, RADIUS = 10,
+        TITLE_H = 41, STATUS_H = 27, SIDEBAR_W = 183,
+        MAIN_X = 198, MAIN_W = 586.5, RIGHT_X = 799, RIGHT_W = 226, TOP = 56,
+        METRIC_W = 137.5, METRIC_H = 88, METRIC_GAP = 11.5,
+        WIDE_Y = 154.5, WIDE_W = 288, WIDE_H = 71.5,
+        SEARCH_Y = 237.5, SEARCH_H = 29.5, SEARCH_W = 325, BTN_GAP = 8,
+        CHIPS_Y = 279.5, CHIP_H = 22, CHIP_GAP = 5.3,
+        TABLE_Y = 312.5, TABLE_H = 490, TABLE_HEAD = 28, ROW_H = 30.8, ROW_SPARE = 3,
+        CARDS_Y = 814.5, CARDS_H = 174.5, CARD_W = 288.5,
+        CHART_Y = 998.5, CHART_H = 122.5, CHART_BARS = 30, CHART_SECONDS = 60,
+        DETAIL_H = 321.5, FEED_Y = 388.5, FEED_H = 134.5, NOTE_Y = 534.5, NOTE_H = 64.5,
+        SIDE_X = 12, SIDE_W = 161, TAB_Y0 = 76, TAB_STEP = 30, TAB_H = 26,
+        PLAYERS_LABEL_Y = 268, SEG_Y = 287, SEG_H = 27,
+        MODE_LABEL_Y = 364, MODE_Y0 = 383, MODE_STEP = 43.6, MODE_H = 38,
+        INFO_Y = 1037.3, INFO_H = 83.4, INFO_STEP = 17.3,
+        FAB = 60, SPARK_POINTS = 14,
+    },
     DRAG_THRESHOLD = 8,
-    SCALES = {0.65, 0.85, 1, 1.15, 1.3},
     DETAIL_CHUNK = 2500, DETAIL_MAX = 60000,
     TOAST_SEC = 2.6,
-    PERF_HISTORY = 30,             -- segundos de la gráfica de FPS
+    PERF_HISTORY = 30,             -- segundos de historial de las mini gráficas
     MAIN_RECENT = 5,               -- eventos recientes en MAIN
+    FEED_VIEWER_LIMIT = 120,       -- reflejo de los límites del script de Studio (solo para mostrar)
+    FEED_SENDER_LIMIT = 30,
 
     -- Refresco
     TICK = 0.35,                   -- periodo del bucle (s)
