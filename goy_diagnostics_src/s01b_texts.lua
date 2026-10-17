@@ -40,6 +40,10 @@ NECESITA ROBLOX STUDIO O ACCESO AL SERVIDOR
 
 -- Mensajes de registro, ubicaciones, direcciones, detalle y rendimiento
 STR.LOC = {PLAYER_GUI = "Tu PlayerGui", BACKPACK = "Tu Backpack", PLAYER = "Tu jugador", OUTSIDE = "fuera", IN_BACKPACK = "en Backpack", IN = "en %s"}
+STR.CODE = {HEAD = "Lo que te envió el servidor (solo lectura; este código no envía nada)",
+    FROM = "Remoto: %s  (%s · Servidor → Cliente)", AT = "Hora: %s · %d argumento(s)",
+    LISTEN = "Así lo escucha un LocalScript de tu juego:", TITLE = "Código recibido · %s",
+    FEED_HEAD = "Lo que registró tu script de Studio (OnServerEvent en TU juego)"}
 STR.DIR = {S2C = "Servidor → Cliente", LOCAL = "Local", REPLICATED = "Replicado", REPLICATED_VALUE = "Servidor → Cliente (replicado)",
     OBSERVED = "Observado", GUI = "Interfaz local", CONSOLE = "Consola del cliente", C2S = "Cliente → Servidor",
     SERVER_NOTICE = "Aviso del servidor", SERVER_STATS = "Métricas del servidor"}
@@ -116,7 +120,7 @@ STR.UI = {
     CHART = "Eventos por segundo · últimos %d s", CHART_PEAK = "pico %d/s", AXIS = {"−60 s", "−30 s", "ahora"},
     DETAIL = "Detalle del evento", DETAIL_ITEM = "Detalle", NO_SELECTION = "Toca una fila para ver su detalle",
     D_TIME = "Hora", D_PLAYER = "Jugador", D_DIR = "Dirección", D_COUNT = "Recibidos", D_ROUTE = "Ruta", D_ARGS = "Argumentos", D_TYPES = "Tipos",
-    D_COPY = "Copiar", D_WATCH = "Vigilar", D_UNWATCH = "No vigilar", D_INSPECT = "Inspeccionar", D_NO_INST = "Ese objeto no está en tu cliente",
+    D_COPY = "Copiar", D_WATCH = "Vigilar", D_UNWATCH = "No vigilar", D_INSPECT = "Inspeccionar", D_CODE = "Código", D_NO_INST = "Ese objeto no está en tu cliente",
     FEED_CARD = "Feed del servidor", FEED_BUDGET = "Presupuesto total", FEED_SENDER = "%s · por emisor", FEED_SENDER_NONE = "Por emisor",
     FEED_PER_S = "%d / %d por s", FEED_DROPPED = "Descartados (aviso)", FEED_MODE = "GOY_DiagMode",
     NOTE = "Solo lectura. El cliente no ve lo que envía con FireServer ni InvokeServer; esa parte la registra tu script de Studio en el servidor.",
