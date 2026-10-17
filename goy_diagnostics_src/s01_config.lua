@@ -28,6 +28,11 @@
    8 PERF · 9 UI · 10 PESTAÑAS · 11 BUCLE (+arranque) · 12 LIMPIEZA · 13 STUDIO
 --------------------------------------------------------------------------------
  CAMBIOS
+ v1.3.1 · El chip "Servidor" muestra también lo que el servidor TE envía
+        (OnClientEvent, en cualquier juego). Botón "Código" en el detalle: la
+        señal recibida como código Luau de solo lectura (remoto + args + cómo
+        se escucha). PERF empieza con tráfico: eventos/s, remotos y jugadores
+        más activos. Arreglados "…" en las tarjetas móviles.
  v1.3 · Dos versiones: PC (diseño exacto, como panel de computadora: arrastre,
         efecto al pasar el ratón, tecla RightControl para abrir/cerrar) y Móvil
         (744 × 360, cabe en un iPhone horizontal). Botones Móvil | PC en la
@@ -65,7 +70,7 @@
 -- 1. CONFIG — todas las constantes en un solo lugar
 -------------------------------------------------------------------------------
 local CONFIG = {
-    VERSION = "1.3",
+    VERSION = "1.3.1",
 
     -- Registro
     LOG_MAX = 700,                 -- entradas en el búfer circular
