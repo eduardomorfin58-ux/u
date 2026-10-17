@@ -1,8 +1,10 @@
 import lupa.lua54 as L, re, sys
 from PIL import Image, ImageDraw, ImageFont
 K=float(sys.argv[1]) if len(sys.argv)>1 else 2.6617
+LAY=sys.argv[2] if len(sys.argv)>2 else 'pc'
 lua=L.LuaRuntime(unpack_returned_tuples=True)
 lua.execute(open('dmock.lua').read())
+lua.execute('UIS.KeyboardEnabled='+('true' if LAY=='pc' else 'false'))
 lua.execute("OTHER=NEW('Player','Player2',PlayersS) OTHER.UserId=1002 function PlayersS:GetPlayers() return {ME,OTHER} end function PlayersS:GetPlayerByUserId(i) if i==8812345 then return ME elseif i==1002 then return OTHER end end")
 lua.execute(open('GOY_Diagnostics.lua').read())
 def step(s):
@@ -32,7 +34,8 @@ def font(size, mono=False, bold=False):
         F[key]=ImageFont.truetype(name, max(6,int(size*K*0.86)))
     return F[key]
 W,H=int(1082*K/1)+0, int(1205*K)
-img=Image.new('RGB',(int(1082*K),int(1205*K)),(5,6,11))
+PW=1040 if LAY=='pc' else 744; PH=1163 if LAY=='pc' else 360
+img=Image.new('RGB',(int((PW+42)*K),int((PH+42)*K)),(5,6,11))
 d=ImageDraw.Draw(img)
 def col(c):
     if c is None: return None
@@ -150,8 +153,9 @@ def draw(o, px, py, pw, ph, depth=0, clip=None):
         if get(c,'ClassName') in ('Frame','TextButton','TextLabel','ScrollingFrame','TextBox'):
             draw(c, x, y-sy, w, h, depth+1, nclip)
 panel=lua.eval("GUI().Viewport.Panel")
-draw(panel, 21-udim(get(panel,'Position'),0,'X'), 21-udim(get(panel,'Position'),0,'Y'), 1040, 1163)
-img.save('render.png')
+draw(panel, 21-udim(get(panel,'Position'),0,'X'), 21-udim(get(panel,'Position'),0,'Y'), PW, PH)
+img.save('render_'+LAY+'.png')
+if LAY!='pc': sys.exit(0)
 ref=Image.open('/workspace/projects/9ab3bdf8-2113-494b-a36f-a90c5426a8ed/files/extracted/GOY-Diagnostics-v1.2-Pro-03ad1d522dff/images/p001-Im0-obj6.jpg').convert('RGB').resize(img.size)
 both=Image.new('RGB',(img.size[0]*2,img.size[1])); both.paste(ref,(0,0)); both.paste(img,(img.size[0],0))
 both.thumbnail((2200,2200)); both.save('compare.png')
