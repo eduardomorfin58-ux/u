@@ -1,6 +1,6 @@
 --[[
 ================================================================================
- GOY DIAGNOSTICS v1.2 Pro  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
+ GOY DIAGNOSTICS v1.3  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
  Cliente Roblox · optimizado para iPhone + Delta
 --------------------------------------------------------------------------------
  QUÉ HACE (desde el cliente, sin tocar el juego):
@@ -28,6 +28,15 @@
    8 PERF · 9 UI · 10 PESTAÑAS · 11 BUCLE (+arranque) · 12 LIMPIEZA · 13 STUDIO
 --------------------------------------------------------------------------------
  CAMBIOS
+ v1.3 · Dos versiones: PC (diseño exacto, como panel de computadora: arrastre,
+        efecto al pasar el ratón, tecla RightControl para abrir/cerrar) y Móvil
+        (744 × 360, cabe en un iPhone horizontal). Botones Móvil | PC en la
+        barra de título; cada versión guarda su escala y su posición.
+        Respuesta al tocar en todos los botones, gráficas y barras animadas
+        (TweenService), menos asignaciones por fotograma (más FPS).
+        TP a jugadores por UserId en el selector de jugadores: solo en TU juego
+        con el script de Studio v1.3 (GOY_DiagTP, valida autorización y 1 TP/s).
+        Revisado con luau-analyze: corregida una variable sin definir (PAGE_Y).
  v1.2 Pro · Interfaz rehecha según el diseño "GOY Diagnostics v1.2 Pro": panel
         de 1040 × 1163 con barra de título, lateral (pestañas con contadores,
         Jugadores, Modo, ejecutor), 6 tarjetas de métricas con mini gráficas,
@@ -56,7 +65,7 @@
 -- 1. CONFIG — todas las constantes en un solo lugar
 -------------------------------------------------------------------------------
 local CONFIG = {
-    VERSION = "1.2 Pro",
+    VERSION = "1.3",
 
     -- Registro
     LOG_MAX = 700,                 -- entradas en el búfer circular
@@ -83,6 +92,7 @@ local CONFIG = {
     -- Feed del servidor (solo existe en TU juego con el script de Studio)
     FEED_REMOTE = "GOY_DiagFeed",
     MODE_REMOTE = "GOY_DiagMode",
+    TP_REMOTE = "GOY_DiagTP",      -- solo existe en tu juego (script de Studio v1.3)
     MODE_REQ_PER_SEC = 2,          -- peticiones de modo de jugadores por segundo
     FEED_PROTOCOL = 2,
 
@@ -122,7 +132,28 @@ local CONFIG = {
         MODE_LABEL_Y = 364, MODE_Y0 = 383, MODE_STEP = 43.6, MODE_H = 38,
         INFO_Y = 1037.3, INFO_H = 83.4, INFO_STEP = 17.3,
         FAB = 60, SPARK_POINTS = 14,
+        PAGE_Y = 237.5, CHIPS_REL = 42, TABLE_REL = 75, LOGS_TABLE_H = 490,
+        ROW_TEXT = 10.5, MONO_TEXT = 10, HEAD_TEXT = 9.5, CHIP_TEXT = 10.5, WRAP_VALUES = true,
     },
+    -- Versión móvil: cabe en un iPhone horizontal (≈ 844 × 390 pt con márgenes seguros).
+    LM = {
+        PANEL_W = 744, PANEL_H = 360, RADIUS = 10,
+        TITLE_H = 36, STATUS_H = 22, SIDEBAR_W = 132,
+        MAIN_X = 140, MAIN_W = 596, TOP = 42,
+        METRIC_H = 40, METRIC_GAP = 6,
+        PAGE_Y = 42, PAGE_Y_METRICS = 88, PAGE_BOTTOM = 332,
+        SEARCH_H = 30, SEARCH_W = 250, BTN_GAP = 6,
+        CHIP_H = 24, CHIP_GAP = 5, CHIPS_REL = 36, TABLE_REL = 66,
+        TABLE_HEAD = 24, ROW_H = 30, ROW_SPARE = 3,
+        SIDE_X = 6, SIDE_W = 120, TAB_Y0 = 8, TAB_STEP = 32, TAB_H = 30,
+        SEG_Y = 206, SEG_H = 28, MODE_BTN_Y = 242,
+        DETAIL_SCALE = 0.92, FAB = 56, SPARK_POINTS = 12,
+        CHART_BARS = 30, CHART_SECONDS = 60,
+        ROW_TEXT = 11, MONO_TEXT = 10.5, HEAD_TEXT = 10, CHIP_TEXT = 11, WRAP_VALUES = false,
+    },
+    LAYOUT_DEFAULT = "auto",       -- "auto" (táctil sin teclado = móvil), "pc" o "mobile"
+    TOGGLE_KEY = "RightControl",   -- tecla para abrir/cerrar en computadora
+    ANIM = {GRAPH = 0.8, BAR = 0.35, OPEN = 0.14, HOVER = 0.08}, -- segundos de animación
     DRAG_THRESHOLD = 8,
     DETAIL_CHUNK = 2500, DETAIL_MAX = 60000,
     TOAST_SEC = 2.6,
