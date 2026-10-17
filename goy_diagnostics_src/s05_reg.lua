@@ -47,7 +47,7 @@ local function onRemoteSignal(e, cat, dir, ...)
     if not RATE.ok(e, e.name) then return end
     local a, types = U.args(...)
     e.lastArgs, e.lastTypes = a, table.concat(types, ", ")
-    LOG.add(cat, e.name, dir, a, types, e.path, {remote = e.path})
+    LOG.add(cat, e.name, dir, a, types, e.path, {remote = e.path, code = U.code(e, U.stamp(), ...)})
 end
 
 function REG.addRemote(inst, rootName, class)
