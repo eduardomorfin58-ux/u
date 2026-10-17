@@ -1,6 +1,6 @@
 --[[
 ================================================================================
- GOY DIAGNOSTICS v1.2 Pro  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
+ GOY DIAGNOSTICS v1.3  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
  Cliente Roblox · optimizado para iPhone + Delta
 --------------------------------------------------------------------------------
  QUÉ HACE (desde el cliente, sin tocar el juego):
@@ -28,6 +28,15 @@
    8 PERF · 9 UI · 10 PESTAÑAS · 11 BUCLE (+arranque) · 12 LIMPIEZA · 13 STUDIO
 --------------------------------------------------------------------------------
  CAMBIOS
+ v1.3 · Dos versiones: PC (diseño exacto, como panel de computadora: arrastre,
+        efecto al pasar el ratón, tecla RightControl para abrir/cerrar) y Móvil
+        (744 × 360, cabe en un iPhone horizontal). Botones Móvil | PC en la
+        barra de título; cada versión guarda su escala y su posición.
+        Respuesta al tocar en todos los botones, gráficas y barras animadas
+        (TweenService), menos asignaciones por fotograma (más FPS).
+        TP a jugadores por UserId en el selector de jugadores: solo en TU juego
+        con el script de Studio v1.3 (GOY_DiagTP, valida autorización y 1 TP/s).
+        Revisado con luau-analyze: corregida una variable sin definir (PAGE_Y).
  v1.2 Pro · Interfaz rehecha según el diseño "GOY Diagnostics v1.2 Pro": panel
         de 1040 × 1163 con barra de título, lateral (pestañas con contadores,
         Jugadores, Modo, ejecutor), 6 tarjetas de métricas con mini gráficas,
@@ -56,7 +65,7 @@
 -- 1. CONFIG — todas las constantes en un solo lugar
 -------------------------------------------------------------------------------
 local CONFIG = {
-    VERSION = "1.2 Pro",
+    VERSION = "1.3",
 
     -- Registro
     LOG_MAX = 700,                 -- entradas en el búfer circular
@@ -83,6 +92,7 @@ local CONFIG = {
     -- Feed del servidor (solo existe en TU juego con el script de Studio)
     FEED_REMOTE = "GOY_DiagFeed",
     MODE_REMOTE = "GOY_DiagMode",
+    TP_REMOTE = "GOY_DiagTP",      -- solo existe en tu juego (script de Studio v1.3)
     MODE_REQ_PER_SEC = 2,          -- peticiones de modo de jugadores por segundo
     FEED_PROTOCOL = 2,
 
@@ -122,7 +132,28 @@ local CONFIG = {
         MODE_LABEL_Y = 364, MODE_Y0 = 383, MODE_STEP = 43.6, MODE_H = 38,
         INFO_Y = 1037.3, INFO_H = 83.4, INFO_STEP = 17.3,
         FAB = 60, SPARK_POINTS = 14,
+        PAGE_Y = 237.5, CHIPS_REL = 42, TABLE_REL = 75, LOGS_TABLE_H = 490,
+        ROW_TEXT = 10.5, MONO_TEXT = 10, HEAD_TEXT = 9.5, CHIP_TEXT = 10.5, WRAP_VALUES = true,
     },
+    -- Versión móvil: cabe en un iPhone horizontal (≈ 844 × 390 pt con márgenes seguros).
+    LM = {
+        PANEL_W = 744, PANEL_H = 360, RADIUS = 10,
+        TITLE_H = 36, STATUS_H = 22, SIDEBAR_W = 132,
+        MAIN_X = 140, MAIN_W = 596, TOP = 42,
+        METRIC_H = 40, METRIC_GAP = 6,
+        PAGE_Y = 42, PAGE_Y_METRICS = 88, PAGE_BOTTOM = 332,
+        SEARCH_H = 30, SEARCH_W = 250, BTN_GAP = 6,
+        CHIP_H = 24, CHIP_GAP = 5, CHIPS_REL = 36, TABLE_REL = 66,
+        TABLE_HEAD = 24, ROW_H = 30, ROW_SPARE = 3,
+        SIDE_X = 6, SIDE_W = 120, TAB_Y0 = 8, TAB_STEP = 32, TAB_H = 30,
+        SEG_Y = 206, SEG_H = 28, MODE_BTN_Y = 242,
+        DETAIL_SCALE = 0.92, FAB = 56, SPARK_POINTS = 12,
+        CHART_BARS = 30, CHART_SECONDS = 60,
+        ROW_TEXT = 11, MONO_TEXT = 10.5, HEAD_TEXT = 10, CHIP_TEXT = 11, WRAP_VALUES = false,
+    },
+    LAYOUT_DEFAULT = "auto",       -- "auto" (táctil sin teclado = móvil), "pc" o "mobile"
+    TOGGLE_KEY = "RightControl",   -- tecla para abrir/cerrar en computadora
+    ANIM = {GRAPH = 0.8, BAR = 0.35, OPEN = 0.14, HOVER = 0.08}, -- segundos de animación
     DRAG_THRESHOLD = 8,
     DETAIL_CHUNK = 2500, DETAIL_MAX = 60000,
     TOAST_SEC = 2.6,
@@ -385,9 +416,16 @@ STR.UI = {
     ST_QUEUE = "cola %d (pico %d)", ST_ERRORS = "errores internos %d", ST_MODE = "Modo %s", ST_FPS = "FPS %.0f", ST_PING = "ping %s", ST_VER = "v%s",
     COLS_MAIN = {"Elemento", "Valor"}, COLS_REMOTES = {"Nombre", "Clase", "Ubicación", "Recibidos", "Último", "Ruta"},
     COLS_TOOLS = {"Nombre", "Estado", "Dueño / lugar", "Detalle"}, COLS_BUTTONS = {"Texto", "Nombre", "Estado", "Clics", "Ruta"},
-    COLS_PERF = {"Métrica", "Valor", "Detalle"},
-    BACK = "Volver", D_LOC = "Ubicación", D_TEXT = "Texto", NOT_OBS = "no observable",
+    COLS_PERF = {"Métrica", "Valor", "Detalle"}, COLS_LOGS_M = {"Hora", "Categoría", "Jugador", "Evento", "Argumentos"},
+    BACK = "Volver", LAYOUT = {"Móvil", "PC"}, SEG_SHORT = {"Todos", "Yo", "Elegir"},
+    TITLE_M = '<font color="#00DCFF"><b>GOY</b></font><b> DIAGNOSTICS</b><font color="#8C96AF"> v%s</font>',
+    FEED_SHORT = "Feed · <b>%s</b>", FEED_SHORT_NONE = "Sin feed", MODE_BTN = "Modo: %s", MODE_PICK = "Elegir modo",
+    PICK_TP = "Elegir jugador · TP", TP = "TP", TP_NONE = "El TP solo funciona en tu juego con el script de Studio v1.3 (GOY_DiagTP).",
+    TP_SENT = "Pidiendo TP a %s…", TP_OK = "Listo: %s", TP_FAIL = "TP no hecho: %s", LAYOUT_SWITCH = "Cambiando a versión %s…", D_LOC = "Ubicación", D_TEXT = "Texto", NOT_OBS = "no observable",
 }
+
+-- Todo el monitor vive en START(): cambiar de versión (Móvil / PC) lo reinicia limpio.
+local function START()
 
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
 if type(ENV.GOY_DIAG) == "table" and type(ENV.GOY_DIAG.destroy) == "function" then
@@ -1163,6 +1201,10 @@ local FEED_KINDS = {
         FEED.serverMode = m.mode
         return "Sistema", STR.MSG.SERVER_MODE, "", not m.ok
     end,
+    TP = function(m)
+        if FEED.onTp then FEED.onTp(m.ok, tostring(m.msg or "")) end
+        return "Sistema", "TP", "", not m.ok
+    end,
 }
 
 function FEED.onMessage(e, ...)
@@ -1172,7 +1214,7 @@ function FEED.onMessage(e, ...)
     REG.remoteVersion = REG.remoteVersion + 1
     local m = FEED.parse(...)
     local handler = FEED_KINDS[m.kind]
-    local isControl = m.kind == "Mode" or m.kind == "Dropped"
+    local isControl = m.kind == "Mode" or m.kind == "Dropped" or m.kind == "TP"
     if not isControl and not RATE.ok(e, STR.MSG.FEED_RATE, CONFIG.RATE_FEED) then return end
     if m.userId then FEED.names[m.userId] = m.player end
     if m.kind == "OnServerEvent" or m.kind == "OnServerInvoke" then FEED.count(m) end
@@ -1215,6 +1257,16 @@ REG.specials[CONFIG.MODE_REMOTE] = function(e, inst)
     FEED.modeRemote = inst
     task.defer(function() FEED.sendMode() end)
     return nil -- solo se usa para pedir el modo; no se escucha
+end
+
+REG.specials[CONFIG.TP_REMOTE] = function(e, inst)
+    FEED.tpRemote = inst
+    return nil -- solo se usa para pedir TP en TU juego; no se escucha
+end
+-- TP por UserId: lo hace tu script de Studio (valida autorización y 1 TP/s).
+function FEED.tp(userId)
+    if not FEED.tpRemote then return false end
+    return (pcall(function() FEED.tpRemote:FireServer({userId = userId}) end))
 end
 
 function FEED.label(v)
@@ -1488,7 +1540,16 @@ end
 -------------------------------------------------------------------------------
 -- 9. UI — componentes del diseño "Pro" (medidas exactas en CONFIG.L)
 -------------------------------------------------------------------------------
-local L = CONFIG.L
+-- Versión: "pc" (diseño exacto de la foto, como panel de computadora) o "mobile" (compacta).
+local LAYOUT = CFG.get("layout", CONFIG.LAYOUT_DEFAULT)
+if LAYOUT ~= "pc" and LAYOUT ~= "mobile" then
+    local touch, keys = false, false
+    pcall(function() touch, keys = S.UIS.TouchEnabled, S.UIS.KeyboardEnabled end)
+    LAYOUT = (touch and not keys) and "mobile" or "pc"
+end
+local IS_PC = LAYOUT == "pc"
+local L = IS_PC and CONFIG.L or CONFIG.LM
+local TweenService = svc("TweenService")
 local TH = {
     outside = Color3.fromRGB(5, 6, 11), bg = Color3.fromRGB(9, 12, 19), bar = Color3.fromRGB(16, 18, 31),
     side = Color3.fromRGB(12, 14, 27), card = Color3.fromRGB(21, 24, 40), border = Color3.fromRGB(42, 46, 70),
@@ -1520,7 +1581,7 @@ local CAT_STYLE = {
 local BAR_COLORS = {TH.cyan, TH.ok, TH.violet, TH.blue, TH.pink}
 local PLAYER_COLORS = {TH.warn, TH.ok, TH.cyan}
 
-local UI = {tab = "LOGS", open = false, pages = {}, lists = {}, force = false, collapsed = false, controls = {}, sel = nil}
+local UI = {layout = LAYOUT, tab = "LOGS", open = false, pages = {}, lists = {}, force = false, collapsed = false, controls = {}, sel = nil}
 
 ---------------- Fuentes: BuilderSans + RobotoMono (si existen), si no Gotham/Code
 local FONT = {}
@@ -1551,6 +1612,52 @@ local function setFont(o, f)
 end
 local function rich(hex, s) return '<font color="' .. hex .. '">' .. U.esc(s) .. '</font>' end
 
+-- Animación suave (TweenService); si no existe, asigna directo.
+local function tw(o, props, t, style)
+    if TweenService and t and t > 0 then
+        local ok = pcall(function()
+            TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Sine, Enum.EasingDirection.Out), props):Play()
+        end)
+        if ok then return end
+    end
+    for k, v in pairs(props) do pcall(function() o[k] = v end) end
+end
+-- Solo asigna si cambió (menos trabajo por fotograma = más FPS).
+local PUT = setmetatable({}, {__mode = "k"})
+local function put(o, k, v)
+    local c = PUT[o]
+    if not c then c = {}; PUT[o] = c end
+    if c[k] == v then return end
+    c[k] = v
+    o[k] = v
+end
+-- Respuesta al tocar / pasar el ratón: capa clara encima (como en una app de PC).
+local function interact(o, radius)
+    local layer = Instance.new("Frame")
+    layer.Name = "Hover"
+    layer.Size = UDim2.new(1, 0, 1, 0)
+    layer.BackgroundColor3 = Color3.new(1, 1, 1)
+    layer.BackgroundTransparency = 1
+    layer.BorderSizePixel = 0
+    layer.ZIndex = (o.ZIndex or 1) + 1
+    layer.Active = false
+    if radius then local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, radius); c.Parent = layer end
+    layer.Parent = o
+    local hovering = false
+    local function set(tr) tw(layer, {BackgroundTransparency = tr}, CONFIG.ANIM.HOVER) end
+    U.conn(o.MouseEnter, function() hovering = true; set(0.94) end, "hover")
+    U.conn(o.MouseLeave, function() hovering = false; set(1) end, "hover")
+    U.conn(o.InputBegan, function(input)
+        local t = input.UserInputType
+        if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then set(0.86) end
+    end, "pulsar")
+    U.conn(o.InputEnded, function(input)
+        local t = input.UserInputType
+        if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then set(hovering and t == Enum.UserInputType.MouseButton1 and 0.94 or 1) end
+    end, "soltar")
+    return layer
+end
+
 -- Marco con fondo, radio y borde opcionales. Coordenadas en unidades del diseño.
 local function box(parent, x, y, w, h, color, radius, border, z)
     local f = mk("Frame", {Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = color or TH.card,
@@ -1579,6 +1686,8 @@ local function button(parent, x, y, w, h, text, fg, bg, onTap, size, font)
     setFont(b, font or FONT.semi)
     corner(b, 6)
     stroke(b, TH.border)
+    b.AutoButtonColor = false
+    interact(b, 6)
     if onTap then U.conn(b.Activated, function() onTap(b) end, "botón " .. tostring(text)) end
     return b
 end
@@ -1632,9 +1741,16 @@ function UI.spark(parent, x, y, w, h, color)
         for i, s in ipairs(S2.segs) do
             local a, b = pts[i], pts[i + 1]
             s.Visible = a ~= nil and b ~= nil
-            if s.Visible then placeSegment(s, a[1], a[2], b[1], b[2]) end
+            if s.Visible then
+                local dx, dy = b[1] - a[1], b[2] - a[2]
+                local props = {Position = UDim2.fromOffset((a[1] + b[1]) / 2, (a[2] + b[2]) / 2),
+                    Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy) + 0.6, 1.4), Rotation = math.deg((math.atan2 or math.atan)(dy, dx))}
+                if S2.drawn then tw(s, props, CONFIG.ANIM.GRAPH) else for k, v in pairs(props) do s[k] = v end end
+            end
         end
     end
+    local set = S2.set
+    function S2.set(values) set(values); S2.drawn = true end
     return S2
 end
 
@@ -1644,8 +1760,8 @@ local function progress(parent, x, y, w, h, color)
     local fill = box(track, 0, 0, 0, h, color, h / 2, nil, 14)
     return function(frac)
         frac = math.clamp(frac or 0, 0, 1)
-        fill.Size = UDim2.fromOffset(w * frac, h)
-        fill.Visible = frac > 0
+        fill.Visible = true
+        tw(fill, {Size = UDim2.fromOffset(math.max(frac > 0 and h or 0, w * frac), h)}, CONFIG.ANIM.BAR)
     end
 end
 
@@ -1705,9 +1821,11 @@ local panel = mk("Frame", {Name = "Panel", Size = UDim2.fromOffset(L.PANEL_W, L.
     BackgroundColor3 = TH.bg, BorderSizePixel = 0, ZIndex = 10, Active = true}, viewport)
 corner(panel, L.RADIUS)
 stroke(panel, TH.border)
-local uiScale = mk("UIScale", {Scale = CFG.get("scale", 1)}, panel)
-function UI.scale() return (uiScale.Scale and uiScale.Scale > 0) and uiScale.Scale or 1 end
-if uiScale.Scale ~= CONFIG.SCALES[1] and uiScale.Scale ~= CONFIG.SCALES[2] then uiScale.Scale = 1 end
+-- Escala guardada por versión (65 % o 100 %); UI.targetScale es la real (la animación de apertura no la cambia).
+UI.targetScale = CFG.get("scale_" .. LAYOUT, IS_PC and CFG.get("scale", 1) or 1)
+if UI.targetScale ~= CONFIG.SCALES[1] and UI.targetScale ~= CONFIG.SCALES[2] then UI.targetScale = 1 end
+local uiScale = mk("UIScale", {Scale = UI.targetScale}, panel)
+function UI.scale() return UI.targetScale end
 
 ---------------- Botón flotante
 local fab = mk("TextButton", {Name = "Fab", Size = UDim2.fromOffset(L.FAB, L.FAB),
@@ -1724,27 +1842,57 @@ local titleBar = mk("TextButton", {Size = UDim2.fromOffset(L.PANEL_W, L.TITLE_H)
 corner(titleBar, L.RADIUS)
 box(titleBar, 0, L.TITLE_H - L.RADIUS, L.PANEL_W, L.RADIUS, TH.bar, nil, nil, 11)  -- esquinas inferiores rectas
 box(panel, 0, L.TITLE_H, L.PANEL_W, 1, TH.line, nil, nil, 12)
-for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 14.4 + (i - 1) * 13.75, 16.7, 8, 8, c, 4, nil, 13) end
-label(titleBar, {x = 62, y = 10, w = 420, h = 22, text = string.format(STR.UI.TITLE, "1.2"), rich = true, size = 13, font = FONT.sans})
 local W = {} -- widgets que se actualizan
-W.pill = box(titleBar, 649.7, 10, 233.3, 22, TH.bar, 11, TH.border, 12)
-W.pillDot = box(W.pill, 12, 8, 6, 6, TH.ok, 3, nil, 14)
-W.pillText = label(W.pill, {x = 23, y = 0, w = 206, h = 22, text = "", rich = true, size = 10, color = TH.dim})
-W.scaleBtn = button(titleBar, 896, 10, 69, 22, "", TH.dim, TH.bar, nil, 10, FONT.sans)
-local minBtn = button(titleBar, 970.8, 10, 24, 22, STR.UI.MIN, TH.dim, TH.bar, nil, 11, FONT.sans)
-local closeBtn = button(titleBar, 1000.7, 10, 24.6, 22, STR.UI.CLOSE, TH.bad, TH.bar, nil, 11, FONT.sans)
+local minBtn, closeBtn
+local function layoutSeg(x, y, w, h)
+    -- [Móvil | PC]: cambia de versión (se guarda y el panel se reinicia en esa versión).
+    local f = box(titleBar, x, y, w, h, TH.chip, 6, TH.border, 12)
+    f.ClipsDescendants = true
+    W.layoutBtns = {}
+    for i, id in ipairs({"mobile", "pc"}) do
+        local b = mk("TextButton", {Position = UDim2.fromOffset((i - 1) * w / 2, 0), Size = UDim2.fromOffset(w / 2, h),
+            BackgroundColor3 = TH.segOn, BackgroundTransparency = (id == LAYOUT) and 0 or 1, Text = STR.UI.LAYOUT[i],
+            TextColor3 = (id == LAYOUT) and TH.cyan or TH.dim, TextSize = IS_PC and 10 or 11, AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 13}, f)
+        setFont(b, FONT.semi)
+        interact(b)
+        U.conn(b.Activated, function() if UI.setLayout then UI.setLayout(id) end end, "versión " .. id)
+        W.layoutBtns[id] = b
+    end
+end
+if IS_PC then
+    for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 14.4 + (i - 1) * 13.75, 16.7, 8, 8, c, 4, nil, 13) end
+    label(titleBar, {x = 62, y = 10, w = 330, h = 22, text = string.format(STR.UI.TITLE, "1.3"), rich = true, size = 13, font = FONT.sans})
+    layoutSeg(520, 10, 116, 22)
+    W.pill = box(titleBar, 649.7, 10, 233.3, 22, TH.bar, 11, TH.border, 12)
+    W.pillDot = box(W.pill, 12, 8, 6, 6, TH.ok, 3, nil, 14)
+    W.pillText = label(W.pill, {x = 23, y = 0, w = 206, h = 22, text = "", rich = true, size = 10, color = TH.dim})
+    W.scaleBtn = button(titleBar, 896, 10, 69, 22, "", TH.dim, TH.bar, nil, 10, FONT.sans)
+    minBtn = button(titleBar, 970.8, 10, 24, 22, STR.UI.MIN, TH.dim, TH.bar, nil, 11, FONT.sans)
+    closeBtn = button(titleBar, 1000.7, 10, 24.6, 22, STR.UI.CLOSE, TH.bad, TH.bar, nil, 11, FONT.sans)
+else
+    for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 12 + (i - 1) * 13, 14, 8, 8, c, 4, nil, 13) end
+    label(titleBar, {x = 52, y = 7, w = 230, h = 22, text = string.format(STR.UI.TITLE_M, "1.3"), rich = true, size = 12, font = FONT.sans})
+    W.pill = box(titleBar, 296, 6, 156, 24, TH.bar, 12, TH.border, 12)
+    W.pillDot = box(W.pill, 10, 9, 6, 6, TH.ok, 3, nil, 14)
+    W.pillText = label(W.pill, {x = 21, y = 0, w = 130, h = 24, text = "", rich = true, size = 10.5, color = TH.dim})
+    layoutSeg(460, 5, 120, 26)
+    W.scaleBtn = button(titleBar, 586, 5, 76, 26, "", TH.dim, TH.bar, nil, 10.5, FONT.sans)
+    minBtn = button(titleBar, 668, 5, 32, 26, STR.UI.MIN, TH.dim, TH.bar, nil, 12, FONT.sans)
+    closeBtn = button(titleBar, 706, 5, 32, 26, STR.UI.CLOSE, TH.bad, TH.bar, nil, 12, FONT.sans)
+end
 
 ---------------- Estructura: lateral, columnas y barra de estado
-local sidebar = box(panel, 0, L.TITLE_H + 1, L.SIDEBAR_W, L.PANEL_H - L.TITLE_H - L.STATUS_H - 1, TH.side, nil, nil, 11)
-box(panel, L.SIDEBAR_W, L.TITLE_H + 1, 1, L.PANEL_H - L.TITLE_H - L.STATUS_H - 1, TH.line, nil, nil, 12)
+local bodyH = L.PANEL_H - L.TITLE_H - L.STATUS_H - 1
+local sidebar = box(panel, 0, L.TITLE_H + 1, L.SIDEBAR_W, bodyH, TH.side, nil, nil, 11)
+box(panel, L.SIDEBAR_W, L.TITLE_H + 1, 1, bodyH, TH.line, nil, nil, 12)
 local main = box(panel, L.MAIN_X, 0, L.MAIN_W, L.PANEL_H, nil, nil, nil, 11)
-local right = box(panel, L.RIGHT_X, 0, L.RIGHT_W, L.PANEL_H, nil, nil, nil, 11)
+local right = IS_PC and box(panel, L.RIGHT_X, 0, L.RIGHT_W, L.PANEL_H, nil, nil, nil, 11) or nil
 local statusBar = box(panel, 0, L.PANEL_H - L.STATUS_H, L.PANEL_W, L.STATUS_H, TH.bar, L.RADIUS, nil, 11)
 box(statusBar, 0, 0, L.PANEL_W, L.RADIUS, TH.bar, nil, nil, 11)
 box(panel, 0, L.PANEL_H - L.STATUS_H, L.PANEL_W, 1, TH.line, nil, nil, 12)
 
 ---------------- Aviso breve
-local toast = label(panel, {x = L.MAIN_X + 60, y = L.PANEL_H - L.STATUS_H - 46, w = L.MAIN_W - 120, h = 30, text = "", size = 11, font = FONT.med, align = "C", z = 40, wrap = true})
+local toast = label(panel, {x = L.MAIN_X + 40, y = L.PANEL_H - L.STATUS_H - 42, w = L.MAIN_W - 80, h = 30, text = "", size = 11, font = FONT.med, align = "C", z = 40, wrap = true})
 toast.BackgroundColor3 = TH.sel
 toast.BackgroundTransparency = 0
 toast.Visible = false
@@ -1768,7 +1916,7 @@ function UI.table(parent, x, y, w, h, cols)
     box(frame, 0, L.TABLE_HEAD, w, 1, TH.line, nil, nil, 14)
     local T = {frame = frame, cols = cols, rows = {}, n = 0, get = nil, cache = {}, headLabels = {}}
     for i, c in ipairs(cols) do
-        T.headLabels[i] = label(head, {x = c.x, y = 0, w = c.hw or c.w, h = L.TABLE_HEAD, text = c.title, size = 9.5, color = TH.dim, font = FONT.sans})
+        T.headLabels[i] = label(head, {x = c.x, y = 0, w = c.hw or c.w, h = L.TABLE_HEAD, text = c.title, size = L.HEAD_TEXT, color = TH.dim, font = FONT.sans})
     end
     local sf = mk("ScrollingFrame", {Position = UDim2.fromOffset(0, L.TABLE_HEAD + 1), Size = UDim2.fromOffset(w, h - L.TABLE_HEAD - 1),
         BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = TH.cyan,
@@ -1796,13 +1944,22 @@ function UI.table(parent, x, y, w, h, cols)
         box(row, 0, L.ROW_H - 1, w, 1, TH.line, nil, nil, 14)
         local r = {btn = row, cells = {}, idx = 0}
         r.accent = box(row, 0, 0, 3, L.ROW_H, TH.ok, nil, nil, 15)
+        interact(row)
         for ci, c in ipairs(T.cols) do
-            if c.kind == "badge" then
+            if c.kind == "action" then
+                local b = button(row, c.x, (L.ROW_H - 22) / 2, c.w, 22, "", TH.cyan, TH.chipOn, nil, L.ROW_TEXT)
+                b.ZIndex = 16
+                U.conn(b.Activated, function()
+                    local it = T.item(r.idx)
+                    if it and it.actions and it.actions[ci] then it.actions[ci]() end
+                end, "acción fila")
+                r.cells[ci] = {action = b}
+            elseif c.kind == "badge" then
                 local f, t = badge(row, c.x, (L.ROW_H - 15) / 2, 15, "", 9.5)
                 r.cells[ci] = {badge = f, text = t}
             else
                 local font = (c.kind == "mono" or c.kind == "dim") and FONT.mono or ((c.kind == "strong" or c.kind == "player") and FONT.med or FONT.sans)
-                r.cells[ci] = {text = label(row, {x = c.x, y = 0, w = c.w, h = L.ROW_H, size = c.kind == "mono" and 10 or 10.5, font = font,
+                r.cells[ci] = {text = label(row, {x = c.x, y = 0, w = c.w, h = L.ROW_H, size = (c.kind == "mono" or c.kind == "dim") and L.MONO_TEXT or L.ROW_TEXT, font = font,
                     color = (c.kind == "mono" or c.kind == "dim") and TH.dim or (c.kind == "player" and TH.violet or TH.text), rich = c.rich})}
             end
         end
@@ -1828,11 +1985,14 @@ function UI.table(parent, x, y, w, h, cols)
                 r.idx = i
                 r.btn.Position = UDim2.fromOffset(0, (i - 1) * L.ROW_H)
                 r.btn.Visible = true
-                r.btn.BackgroundColor3 = it.selected and TH.sel or ((i % 2 == 0) and TH.rowB or TH.rowA)
-                r.accent.Visible = it.selected or false
+                put(r.btn, "BackgroundColor3", it.selected and TH.sel or ((i % 2 == 0) and TH.rowB or TH.rowA))
+                put(r.accent, "Visible", it.selected or false)
                 for ci, cell in ipairs(r.cells) do
                     local v = it.cells[ci] or ""
-                    if cell.badge then
+                    if cell.action then
+                        cell.action.Visible = v ~= ""
+                        if cell.action.Text ~= v then cell.action.Text = v end
+                    elseif cell.badge then
                         cell.badge.Visible = v ~= ""
                         if v ~= "" then setBadge(cell.badge, cell.text, v) end
                     else
@@ -1873,22 +2033,24 @@ function UI.chips(parent, x, y, labels, isOn, onPick, widths)
     local C = {buttons = {}}
     local cx = x
     for i, text in ipairs(labels) do
-        local w = (widths and widths[i]) or (#text * 5.6 + 16)
+        local w = ((widths and widths[i]) or (#text * 5.6 + 16)) * (L.CHIP_TEXT / 10.5)
         local b = mk("TextButton", {Position = UDim2.fromOffset(cx, y), Size = UDim2.fromOffset(w, L.CHIP_H), BackgroundColor3 = TH.chip,
-            Text = text, TextColor3 = TH.dim, TextSize = 10.5, AutoButtonColor = true, BorderSizePixel = 0, ZIndex = 14}, parent)
+            Text = text, TextColor3 = TH.dim, TextSize = L.CHIP_TEXT, AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 14}, parent)
         setFont(b, FONT.med)
         corner(b, L.CHIP_H / 2)
+        interact(b, L.CHIP_H / 2)
         local st = stroke(b, TH.border)
         C.buttons[i] = {b = b, st = st}
         U.conn(b.Activated, function() onPick(i); C.refresh(); UI.force = true end, "chip " .. text)
         cx = cx + w + L.CHIP_GAP
     end
+    C.right = cx
     function C.refresh()
         for i, it in ipairs(C.buttons) do
             local on = isOn(i)
-            it.b.BackgroundColor3 = on and TH.chipOn or TH.chip
-            it.b.TextColor3 = on and TH.cyan or TH.dim
-            it.st.Color = on and TH.cyan or TH.border
+            put(it.b, "BackgroundColor3", on and TH.chipOn or TH.chip)
+            put(it.b, "TextColor3", on and TH.cyan or TH.dim)
+            put(it.st, "Color", on and TH.cyan or TH.border)
         end
     end
     C.refresh()
@@ -1902,7 +2064,7 @@ function UI.search(parent, x, y, w, h, placeholder, onChange)
     ring.BackgroundTransparency = 1
     placeSegment(segment(f, TH.dim, 14), 18, h / 2 + 2, 21.5, h / 2 + 5.5, 1.2)
     local tb = mk("TextBox", {Position = UDim2.fromOffset(32, 0), Size = UDim2.fromOffset(w - 40, h), BackgroundTransparency = 1, Text = "",
-        PlaceholderText = placeholder, PlaceholderColor3 = TH.text, TextColor3 = TH.text, TextSize = 11.5, ClearTextOnFocus = false,
+        PlaceholderText = placeholder, PlaceholderColor3 = TH.text, TextColor3 = TH.text, TextSize = L.ROW_TEXT + 1, ClearTextOnFocus = false,
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 14}, f)
     setFont(tb, FONT.sans)
     U.conn(tb:GetPropertyChangedSignal("Text"), function() onChange(tb.Text) end, "buscar")
@@ -1922,10 +2084,18 @@ end
 -------------------------------------------------------------------------------
 -- 10. PESTAÑAS — lateral, tarjetas, páginas, detalle y barra de estado
 -------------------------------------------------------------------------------
-local PAGE_Y = L.SEARCH_Y
-local PAGE_H = L.CHART_Y + L.CHART_H - L.SEARCH_Y
-local CHIPS_Y = L.CHIPS_Y - PAGE_Y
-local TABLE_Y = L.TABLE_Y - PAGE_Y
+-- Zona de cada pestaña dentro de la columna central (en móvil, las tarjetas de
+-- métricas solo se ven en MAIN y PERFORMANCE para dejar sitio a la tabla).
+local function pageGeom(name)
+    if IS_PC then return L.PAGE_Y, L.CHART_Y + L.CHART_H - L.PAGE_Y end
+    local y = (name == "MAIN" or name == "PERFORMANCE") and L.PAGE_Y_METRICS or L.PAGE_Y
+    return y, L.PAGE_BOTTOM - y
+end
+local PAGE_H = {}
+local OV_Y = IS_PC and L.PAGE_Y or L.TOP                       -- capas (detalle largo, selector)
+local OV_H = IS_PC and (L.CHART_Y + L.CHART_H - L.PAGE_Y) or (L.PAGE_BOTTOM - L.TOP)
+local CHIPS_Y, TABLE_Y = L.CHIPS_REL, L.TABLE_REL
+local TOOLBAR_X = L.SEARCH_W + (IS_PC and 8.6 or 6)
 local fmtInt = function(n)
     local s = tostring(math.floor(n or 0))
     local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
@@ -1935,21 +2105,25 @@ local function fmt(v, f, unit) if v == nil then return STR.NA end return string.
 
 ---------------- Lateral: pestañas
 local SIDE = {tabs = {}, seg = {}, modes = {}, info = {}}
-label(sidebar, {x = 17.5, y = 13, w = 150, h = 14, text = STR.UI.SIDE_TABS, size = 10, color = TH.dim})
+if IS_PC then label(sidebar, {x = 17.5, y = 13, w = 150, h = 14, text = STR.UI.SIDE_TABS, size = 10, color = TH.dim}) end
 for i, name in ipairs(STR.TABS) do
-    local cy = L.TAB_Y0 - L.TITLE_H + 13 + (i - 1) * L.TAB_STEP
+    local cy = IS_PC and (L.TAB_Y0 - L.TITLE_H + 13 + (i - 1) * L.TAB_STEP) or (L.TAB_Y0 + L.TAB_H / 2 + (i - 1) * L.TAB_STEP)
     local b = mk("TextButton", {Position = UDim2.fromOffset(L.SIDE_X, cy - L.TAB_H / 2), Size = UDim2.fromOffset(L.SIDE_W, L.TAB_H),
         BackgroundColor3 = TH.sel, BackgroundTransparency = 1, Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 13}, sidebar)
     corner(b, 6)
     local bar = box(b, 0, 0, 3, L.TAB_H, TH.cyan, 2, nil, 14)
-    local name_ = label(b, {x = 7.6, y = 0, w = 100, h = L.TAB_H, text = name, size = 11.5, color = TH.dim})
-    local count = label(b, {x = 90, y = 0, w = 63.7, h = L.TAB_H, text = "", size = 10, color = TH.dim, align = "R", font = FONT.mono})
+    local name_ = label(b, {x = 7.6, y = 0, w = 100, h = L.TAB_H, text = (not IS_PC and name == "PERFORMANCE") and "PERF" or name, size = IS_PC and 11.5 or 11, color = TH.dim})
+    local count = label(b, {x = L.SIDE_W - 70, y = 0, w = 63.7, h = L.TAB_H, text = "", size = 10, color = TH.dim, align = "R", font = FONT.mono})
+    interact(b, 6)
     SIDE.tabs[name] = {b = b, bar = bar, name = name_, count = count}
-    UI.pages[name] = box(main, 0, PAGE_Y, L.MAIN_W, PAGE_H, nil, nil, nil, 12)
+    local py, ph = pageGeom(name)
+    PAGE_H[name] = ph
+    UI.pages[name] = box(main, 0, py, L.MAIN_W, ph, nil, nil, nil, 12)
     UI.pages[name].Visible = false
 end
 
 ---------------- Lateral: jugadores
+if IS_PC then
 label(sidebar, {x = 17.5, y = L.PLAYERS_LABEL_Y - L.TITLE_H, w = 150, h = 14, text = STR.UI.SIDE_PLAYERS, size = 10, color = TH.dim})
 local segFrame = box(sidebar, L.SIDE_X, L.SEG_Y - L.TITLE_H, L.SIDE_W, L.SEG_H, TH.chip, 6, TH.border, 13)
 segFrame.ClipsDescendants = true
@@ -1958,11 +2132,12 @@ for i, text in ipairs(STR.UI.SEG) do
     local b = mk("TextButton", {Position = UDim2.fromOffset((i - 1) * w, 0), Size = UDim2.fromOffset(w, L.SEG_H), BackgroundColor3 = TH.segOn,
         BackgroundTransparency = 1, Text = text, TextColor3 = TH.dim, TextSize = 10.5, AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 14}, segFrame)
     setFont(b, FONT.med)
+    interact(b)
     SIDE.seg[i] = b
 end
 label(sidebar, {x = 17.5, y = L.SEG_Y - L.TITLE_H + L.SEG_H + 6, w = 158, h = 30, text = STR.UI.PLAYERS_NOTE, size = 10, color = TH.dim, wrap = true, top = true})
 
----------------- Lateral: modos
+---------------- Lateral: modos (PC: lista; móvil: botón que abre la lista)
 label(sidebar, {x = 17.5, y = L.MODE_LABEL_Y - L.TITLE_H, w = 150, h = 14, text = STR.UI.SIDE_MODE, size = 10, color = TH.dim})
 for i, m in ipairs(CONFIG.MODES) do
     local y = L.MODE_Y0 - L.TITLE_H + (i - 1) * L.MODE_STEP
@@ -1973,6 +2148,7 @@ for i, m in ipairs(CONFIG.MODES) do
     local dot = box(b, 8.4, 10.7, 5, 5, TH.dotOff, 3, nil, 14)
     label(b, {x = 21.7, y = 5, w = 136, h = 16, text = m.label, size = 12, font = FONT.semi})
     label(b, {x = 21.7, y = 19.5, w = 138, h = 14, text = m.desc or "", size = 10, color = TH.dim})
+    interact(b, 7)
     SIDE.modes[i] = {b = b, st = st, dot = dot}
     U.conn(b.Activated, function()
         MODE.set(i)
@@ -1990,6 +2166,29 @@ do
         SIDE.info[i] = label(card, {x = 70, y = cy - 7, w = 81, h = 14, text = "", size = 10, align = "R"})
     end
 end
+else
+    -- Móvil: segmentos cortos + botón de modo.
+    local segFrame = box(sidebar, L.SIDE_X, L.SEG_Y, L.SIDE_W, L.SEG_H, TH.chip, 6, TH.border, 13)
+    segFrame.ClipsDescendants = true
+    for i, text in ipairs(STR.UI.SEG_SHORT) do
+        local w = L.SIDE_W / 3
+        local b = mk("TextButton", {Position = UDim2.fromOffset((i - 1) * w, 0), Size = UDim2.fromOffset(w, L.SEG_H), BackgroundColor3 = TH.segOn,
+            BackgroundTransparency = 1, Text = text, TextColor3 = TH.dim, TextSize = 10.5, AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 14}, segFrame)
+        setFont(b, FONT.med)
+        interact(b)
+        SIDE.seg[i] = b
+    end
+    SIDE.modeBtn = button(sidebar, L.SIDE_X, L.MODE_BTN_Y, L.SIDE_W, L.SEG_H, "", TH.text, TH.chip, function()
+        local opts = {}
+        for i, m in ipairs(CONFIG.MODES) do
+            opts[i] = {title = m.label, sub = m.desc or "", onPick = function()
+                MODE.set(i)
+                if MODE.def.capture then UI.toast(string.format(STR.CAPTURE_START, CONFIG.CAPTURE_SECONDS)) end
+            end}
+        end
+        UI.pick(STR.UI.MODE_PICK, opts)
+    end, 10.5, FONT.med)
+end
 
 ---------------- Tarjetas de métricas
 local METRIC = {}
@@ -2005,26 +2204,54 @@ end
 -- Valor en una o dos líneas (como en el diseño: "412 / MB" cuando no cabe).
 local function setMetric(m, value, sub, hist)
     local num, unit = value:match("^(%S+)%s+(%S+)$")
-    local twoLines = num and #value >= 6
-    m.value.Text = twoLines and num or value
-    m.value2.Text = twoLines and unit or ""
-    m.sub.Position = UDim2.fromOffset(11.8, twoLines and 67 or m.baseSubY)
-    m.sub.Text = sub
+    local twoLines = L.WRAP_VALUES and num and #value >= 6
+    put(m.value, "Text", twoLines and num or value)
+    if m.value2 then
+        put(m.value2, "Text", twoLines and unit or "")
+        put(m.sub, "Position", UDim2.fromOffset(11.8, twoLines and 67 or m.baseSubY))
+    end
+    put(m.sub, "Text", sub)
     if hist and #hist >= 2 then m.spark.set(hist) end
 end
-for k, def in ipairs({{"fps", STR.UI.M_FPS, TH.ok}, {"ping", STR.UI.M_PING, TH.cyan}, {"mem", STR.UI.M_MEM, TH.violet}, {"net", STR.UI.M_NET, TH.blue}}) do
-    METRIC[def[1]] = metricCard(0.7 + (k - 1) * (L.METRIC_W + L.METRIC_GAP), L.TOP, L.METRIC_W, L.METRIC_H, def[2], def[3], 74.4, 28)
+if IS_PC then
+    for k, def in ipairs({{"fps", STR.UI.M_FPS, TH.ok}, {"ping", STR.UI.M_PING, TH.cyan}, {"mem", STR.UI.M_MEM, TH.violet}, {"net", STR.UI.M_NET, TH.blue}}) do
+        METRIC[def[1]] = metricCard(0.7 + (k - 1) * (L.METRIC_W + L.METRIC_GAP), L.TOP, L.METRIC_W, L.METRIC_H, def[2], def[3], 74.4, 28)
+    end
+    METRIC.eps = metricCard(0, L.WIDE_Y, L.WIDE_W, L.WIDE_H, STR.UI.M_EPS, TH.warn, 224, 27.2)
+    METRIC.console = metricCard(L.WIDE_W + 10.3, L.WIDE_Y, L.WIDE_W, L.WIDE_H, STR.UI.M_CONSOLE, TH.bad, 224, 27.2)
+else
+    -- Móvil: 4 tarjetas compactas (solo en MAIN y PERFORMANCE).
+    METRIC.group = box(main, 0, L.TOP, L.MAIN_W, L.METRIC_H, nil, nil, nil, 12)
+    local w = (L.MAIN_W - 3 * L.METRIC_GAP) / 4
+    for k, def in ipairs({{"fps", STR.UI.M_FPS, TH.ok}, {"ping", STR.UI.M_PING, TH.cyan}, {"mem", STR.UI.M_MEM, TH.violet}, {"eps", STR.UI.M_EPS, TH.warn}}) do
+        local c = box(METRIC.group, (k - 1) * (w + L.METRIC_GAP), 0, w, L.METRIC_H, TH.card, 7, TH.border, 12)
+        label(c, {x = 8, y = 3, w = w - 16, h = 13, text = def[2], size = 9.5, color = TH.dim})
+        METRIC[def[1]] = {card = c, value = label(c, {x = 8, y = 17, w = 80, h = 20, text = "", size = 15, font = FONT.bold, color = def[3]}),
+            sub = label(c, {x = 0, y = 0, w = 0, h = 0, text = ""}), spark = UI.spark(c, w - 52, 17, 44, 14, def[3]), baseSubY = 0}
+    end
 end
-METRIC.eps = metricCard(0, L.WIDE_Y, L.WIDE_W, L.WIDE_H, STR.UI.M_EPS, TH.warn, 224, 27.2)
-METRIC.console = metricCard(L.WIDE_W + 10.3, L.WIDE_Y, L.WIDE_W, L.WIDE_H, STR.UI.M_CONSOLE, TH.bad, 224, 27.2)
 
 ---------------- Columna derecha: detalle, feed y nota
-local DC = {} -- tarjeta de detalle
+local DC = {} -- tarjeta de detalle (PC: columna derecha; móvil: capa sobre la tabla)
 do
-    local c = box(right, 0.5, L.TOP + 0.5, L.RIGHT_W - 0.5, L.DETAIL_H, TH.card, 8, TH.border, 12)
+    local DW, DH = 225.5, 321.5
+    local c
+    if IS_PC then
+        c = box(right, 0.5, L.TOP + 0.5, DW, DH, TH.card, 8, TH.border, 12)
+    else
+        local sc = L.DETAIL_SCALE
+        local holder = box(panel, L.PANEL_W - DW * sc - 8, L.TITLE_H + 6, DW, DH, nil, nil, nil, 34)
+        mk("UIScale", {Scale = sc}, holder)
+        holder.Visible = false
+        DC.holder = holder
+        c = box(holder, 0, 0, DW, DH, TH.card, 8, TH.cyan, 35)
+        c.Active = true
+        local x = button(c, DW - 30, 8, 22, 20, STR.UI.CLOSE, TH.bad, TH.card, function() holder.Visible = false end, 11)
+        x.ZIndex = 40
+    end
     DC.card = c
     DC.head = label(c, {x = 12, y = 13, w = 140, h = 15, text = STR.UI.DETAIL, size = 11.5, font = FONT.semi})
-    DC.badge, DC.badgeText = badge(c, 170, 12.7, 14.3, "Servidor", 9.5)
+    DC.badge, DC.badgeText = badge(c, IS_PC and 170 or 140, 12.7, 14.3, "Servidor", 9.5)
     DC.title = label(c, {x = 12, y = 35, w = 202, h = 18, text = STR.UI.NO_SELECTION, size = 13, font = FONT.semi})
     DC.keys, DC.vals = {}, {}
     for i = 1, 4 do
@@ -2049,7 +2276,7 @@ do
     DC.inspect = button(c, 149.2, 280.3, 64.3, 28, STR.UI.D_INSPECT, TH.text, TH.card, nil, 10.5)
 end
 local FC = {}
-do
+if IS_PC then
     local c = box(right, 0.5, L.FEED_Y, L.RIGHT_W - 0.5, L.FEED_H, TH.card, 8, TH.border, 12)
     label(c, {x = 12, y = 11, w = 200, h = 15, text = STR.UI.FEED_CARD, size = 11.5, font = FONT.semi})
     FC.k1 = label(c, {x = 12, y = 32.5, w = 120, h = 14, text = STR.UI.FEED_BUDGET, size = 10, color = TH.dim})
@@ -2063,7 +2290,7 @@ do
     label(c, {x = 12, y = 108.5, w = 130, h = 14, text = STR.UI.FEED_MODE, size = 10, color = TH.dim})
     FC.v4 = label(c, {x = 110, y = 108.5, w = 104, h = 14, text = "", size = 10, align = "R", color = TH.ok})
 end
-do
+if IS_PC then
     local c = box(right, 0.5, L.NOTE_Y, L.RIGHT_W - 0.5, L.NOTE_H, nil, 8, nil, 12)
     dashedBorder(c, L.RIGHT_W - 0.5, L.NOTE_H, TH.border)
     label(c, {x = 12, y = 10, w = 202, h = 46, text = STR.UI.NOTE, size = 9.5, color = TH.dim, wrap = true, top = true})
@@ -2072,12 +2299,12 @@ end
 ---------------- Barra de estado
 local ST = {}
 do
-    local leftList = box(statusBar, 17.3, 0, 760, L.STATUS_H, nil, nil, nil, 12)
+    local leftList = box(statusBar, IS_PC and 17.3 or 12, 0, IS_PC and 760 or 420, L.STATUS_H, nil, nil, nil, 12)
     mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 14), VerticalAlignment = Enum.VerticalAlignment.Center,
         SortOrder = Enum.SortOrder.LayoutOrder}, leftList)
     local live = box(leftList, 0, 0, 62, L.STATUS_H, nil, nil, nil, 12)
     live.LayoutOrder = 1
-    ST.dot = box(live, 0, 10.5, 6, 6, TH.ok, 3, nil, 13)
+    ST.dot = box(live, 0, (L.STATUS_H - 6) / 2, 6, 6, TH.ok, 3, nil, 13)
     ST.live = label(live, {x = 9.4, y = 0, w = 55, h = L.STATUS_H, text = STR.UI.ST_LIVE, size = 10, font = FONT.semi, color = TH.ok})
     local function item(parent, order, align)
         local t = label(parent, {x = 0, y = 0, w = 0, h = L.STATUS_H, text = "", size = 10, color = TH.dim, align = align})
@@ -2086,16 +2313,16 @@ do
         return t
     end
     ST.left = {}
-    for i = 1, 5 do ST.left[i] = item(leftList, i + 1) end
-    local rightList = box(statusBar, 625, 0, 400, L.STATUS_H, nil, nil, nil, 12)
+    for i = 1, (IS_PC and 5 or 3) do ST.left[i] = item(leftList, i + 1) end
+    local rightList = box(statusBar, L.PANEL_W - (IS_PC and 415 or 312), 0, IS_PC and 400 or 300, L.STATUS_H, nil, nil, nil, 12)
     mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 14), VerticalAlignment = Enum.VerticalAlignment.Center,
         HorizontalAlignment = Enum.HorizontalAlignment.Right, SortOrder = Enum.SortOrder.LayoutOrder}, rightList)
     ST.right = {}
-    for i = 1, 4 do ST.right[i] = item(rightList, i) end
+    for i = 1, (IS_PC and 4 or 3) do ST.right[i] = item(rightList, i) end
 end
 
 ---------------- Detalle largo (inspector, script de Studio, limitaciones…) sobre la zona de la pestaña
-local detail = box(main, 0, PAGE_Y, L.MAIN_W, PAGE_H, TH.bg, 8, TH.violet, 30)
+local detail = box(main, 0, OV_Y, L.MAIN_W, OV_H, TH.bg, 8, TH.violet, 30)
 detail.Active = true
 detail.Visible = false
 local DET = {chunks = {}, text = "", extraFn = nil}
@@ -2104,7 +2331,7 @@ DET.close = button(detail, L.MAIN_W - 72, 6, 62, 26, STR.UI.BACK, TH.bad, TH.car
 DET.copy = button(detail, L.MAIN_W - 140, 6, 62, 26, STR.COPY, TH.cyan, TH.card, function() UI.copyOrShow(STR.DETAIL, DET.text) end, 10.5)
 DET.extra = button(detail, L.MAIN_W - 238, 6, 92, 26, "", TH.violet, TH.card, function() if DET.extraFn then DET.extraFn() end end, 10.5)
 for _, b in ipairs({DET.close, DET.copy, DET.extra}) do b.ZIndex = 31 end
-DET.scroll = mk("ScrollingFrame", {Position = UDim2.fromOffset(8, 40), Size = UDim2.fromOffset(L.MAIN_W - 16, PAGE_H - 48), BackgroundColor3 = TH.card,
+DET.scroll = mk("ScrollingFrame", {Position = UDim2.fromOffset(8, 40), Size = UDim2.fromOffset(L.MAIN_W - 16, OV_H - 48), BackgroundColor3 = TH.card,
     BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = TH.violet, AutomaticCanvasSize = Enum.AutomaticSize.Y,
     CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 31}, detail)
 corner(DET.scroll, 6)
@@ -2152,19 +2379,23 @@ function UI.detail(title, text, extraLabel, extraFn)
 end
 
 ---------------- Selector de jugador (misma zona)
-local picker = box(main, 0, PAGE_Y, L.MAIN_W, PAGE_H, TH.bg, 8, TH.cyan, 33)
+local picker = box(main, 0, OV_Y, L.MAIN_W, OV_H, TH.bg, 8, TH.cyan, 33)
 picker.Active = true
 picker.Visible = false
 local pickerTitle = label(picker, {x = 12, y = 6, w = 300, h = 28, text = STR.PICK_TITLE, size = 12, font = FONT.semi, color = TH.cyan, z = 34})
 local pickerClose = button(picker, L.MAIN_W - 72, 6, 62, 26, STR.UI.BACK, TH.bad, TH.card, function() picker.Visible = false end, 10.5)
 pickerClose.ZIndex = 34
-local pickerList = UI.table(picker, 8, 40, L.MAIN_W - 16, PAGE_H - 48, {
-    {title = STR.UI.D_PLAYER, x = 14, w = 300, kind = "strong"}, {title = "UserId", x = 330, w = 230, kind = "mono"}})
+local pickerList = UI.table(picker, 8, 40, L.MAIN_W - 16, OV_H - 48, {
+    {title = STR.UI.D_PLAYER, x = 14, w = IS_PC and 260 or 200, kind = "strong"}, {title = "UserId / detalle", x = IS_PC and 280 or 220, w = IS_PC and 200 or 240, kind = "mono"},
+    {title = "", x = L.MAIN_W - 16 - 70, w = 56, kind = "action"}})
+-- options = {{title, sub, onPick, action = {text, fn}}}
 function UI.pick(title, options)
     pickerTitle.Text = title
     local items = {}
     for i, o in ipairs(options) do
-        items[i] = {cells = {o.title, o.sub or ""}, onTap = function() picker.Visible = false; o.onPick(); UI.force = true end}
+        items[i] = {cells = {o.title, o.sub or "", o.action and o.action.text or ""},
+            actions = o.action and {[3] = function() o.action.fn(); UI.force = true end} or nil,
+            onTap = function() picker.Visible = false; o.onPick(); UI.force = true end}
     end
     picker.Visible = true
     pickerList.set(items)
@@ -2193,11 +2424,19 @@ function UI.pickPlayer()
     local ok, players = pcall(function() return S.Players:GetPlayers() end)
     for _, p in ipairs(ok and players or {}) do
         local uid = p.UserId
+        local name = p.Name
         opts[#opts + 1] = {title = (p.DisplayName and p.DisplayName ~= p.Name) and (p.DisplayName .. " (@" .. p.Name .. ")") or p.Name,
-            sub = string.format(STR.PICK_SUB, uid, p == LP and STR.PICK_YOU or ""), onPick = function() FEED.setFilter(uid) end}
+            sub = string.format(STR.PICK_SUB, uid, p == LP and STR.PICK_YOU or ""), onPick = function() FEED.setFilter(uid) end,
+            action = p ~= LP and {text = STR.UI.TP, fn = function() UI.tp(uid, name) end} or nil}
     end
-    UI.pick(STR.PICK_TITLE, opts)
+    UI.pick(STR.UI.PICK_TP, opts)
 end
+-- TP a un jugador por UserId: solo en tu juego (lo hace tu script de Studio, que valida todo).
+function UI.tp(userId, name)
+    if not FEED.tpRemote then UI.toast(STR.UI.TP_NONE) return end
+    if FEED.tp(userId) then UI.toast(string.format(STR.UI.TP_SENT, tostring(name))) end
+end
+FEED.onTp = function(ok, msg) UI.toast(string.format(ok and STR.UI.TP_OK or STR.UI.TP_FAIL, msg)) end
 for i, b in ipairs(SIDE.seg) do
     U.conn(b.Activated, function()
         if i == 1 then FEED.setFilter("all") elseif i == 2 then FEED.setFilter("me") else UI.pickPlayer() end
@@ -2275,6 +2514,7 @@ end
 -- spec = {badge, title, rows = {{k, v, color}}, route, args, types = {...}, copyText, inst}
 function UI.showCard(spec)
     DC.spec = spec
+    if DC.holder then DC.holder.Visible = true end
     DC.badge.Visible = spec.badge ~= nil
     if spec.badge then setBadge(DC.badge, DC.badgeText, spec.badge) end
     DC.title.Text = spec.title or ""
@@ -2440,19 +2680,20 @@ do
     local page = UI.pages.LOGS
     logState.box = UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.UI.SEARCH_LOGS, function(t) logState.q = t; UI.force = true end)
     local pauseBtn
-    pauseBtn = toolbarRow(page, 333.6, {
-        {text = STR.PAUSE, w = 52.6, fg = TH.text, bg = TH.chip, fn = function(b)
+    local BW = IS_PC and {52.6, 58, 54, 64} or {56, 62, 58, 70}
+    pauseBtn = toolbarRow(page, TOOLBAR_X, {
+        {text = STR.PAUSE, w = BW[1], fg = TH.text, bg = TH.chip, fn = function(b)
             LOG.paused = not LOG.paused
             b.Text = LOG.paused and STR.RESUME or STR.PAUSE
             UI.force = true
         end},
-        {text = STR.CLEAR, w = 58, fg = TH.bad, bg = TH.btnRed, fn = function() LOG.clear(); UI.sel = nil; UI.force = true; UI.toast(STR.CLEARED) end},
-        {text = STR.COPY, w = 54, fg = TH.ok, bg = TH.btnGreen, fn = function()
+        {text = STR.CLEAR, w = BW[2], fg = TH.bad, bg = TH.btnRed, fn = function() LOG.clear(); UI.sel = nil; UI.force = true; UI.toast(STR.CLEARED) end},
+        {text = STR.COPY, w = BW[3], fg = TH.ok, bg = TH.btnGreen, fn = function()
             local list, t = filteredLogs(), {string.format(STR.LOGS_COPY_HEAD, U.fullDate(), MODE.def.label, FEED.label())}
             for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]) end
             UI.copyOrShow(STR.LOGS_TITLE, table.concat(t, "\n"))
         end},
-        {text = STR.EXPORT, w = 64, fg = TH.violet, bg = TH.btnViolet, fn = function()
+        {text = STR.EXPORT, w = BW[4], fg = TH.violet, bg = TH.btnViolet, fn = function()
             local list = filteredLogs()
             local base, t, records = "logs_" .. U.fileStamp(), {string.format(STR.LOGS_COPY_HEAD, U.fullDate(), MODE.def.label, FEED.label())}, {}
             for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]); records[#records + 1] = LOG.toRecord(list[i]) end
@@ -2465,15 +2706,24 @@ do
     LOGS.pause = pauseBtn[1]
     LOGS.chips = UI.chips(page, 0, CHIPS_Y, CHIPS, function(i) return logState.chip == i end,
         function(i) logState.chip = i; CFG.set("logChip", i) end, {44, 53, 50, 43, 40, 36, 52, 50, 44})
-    LOGS.count = label(page, {x = 386.5, y = CHIPS_Y, w = 200, h = L.CHIP_H, text = "", size = 10, color = TH.dim, align = "R"})
-    local C = STR.UI.COLS_LOGS
-    LOGS.table = UI.table(page, 0, TABLE_Y, L.MAIN_W, L.TABLE_H, {
-        {title = C[1], x = 14, w = 88, kind = "mono"}, {title = C[2], x = 107, w = 70, kind = "badge"},
-        {title = C[3], x = 184.7, w = 80, kind = "player"}, {title = C[4], x = 269, w = 168, kind = "strong"},
-        {title = C[5], x = 443, w = 46, hw = 60, kind = "mono"}, {title = C[6], x = 494, w = 88, kind = "mono"}})
+    LOGS.count = label(page, {x = LOGS.chips.right, y = CHIPS_Y, w = L.MAIN_W - LOGS.chips.right, h = L.CHIP_H, text = "", size = 10, color = TH.dim, align = "R"})
+    if IS_PC then
+        local C = STR.UI.COLS_LOGS
+        LOGS.table = UI.table(page, 0, TABLE_Y, L.MAIN_W, L.LOGS_TABLE_H, {
+            {title = C[1], x = 14, w = 88, kind = "mono"}, {title = C[2], x = 107, w = 70, kind = "badge"},
+            {title = C[3], x = 184.7, w = 80, kind = "player"}, {title = C[4], x = 269, w = 168, kind = "strong"},
+            {title = C[5], x = 443, w = 46, hw = 60, kind = "mono"}, {title = C[6], x = 494, w = 88, kind = "mono"}})
+    else
+        local C = STR.UI.COLS_LOGS_M
+        LOGS.table = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H.LOGS - TABLE_Y, {
+            {title = C[1], x = 10, w = 76, kind = "mono"}, {title = C[2], x = 90, w = 70, kind = "badge"},
+            {title = C[3], x = 166, w = 84, kind = "player"}, {title = C[4], x = 254, w = 200, kind = "strong"},
+            {title = C[5], x = 458, w = 130, kind = "mono"}})
+    end
     UI.lists.LOGS = LOGS.table
+    if IS_PC then
     -- Remotos / jugadores más activos
-    local cardsY = L.CARDS_Y - PAGE_Y
+    local cardsY = L.CARDS_Y - L.PAGE_Y
     local function topCard(x, title)
         local c = box(page, x, cardsY, L.CARD_W, L.CARDS_H, TH.card, 8, TH.border, 12)
         label(c, {x = 12.8, y = 10.7, w = 260, h = 15, text = title, size = 11.5, font = FONT.semi})
@@ -2492,7 +2742,7 @@ do
     LOGS.plCard, LOGS.plRows = topCard(299, STR.UI.TOP_PLAYERS)
     LOGS.plNote = label(LOGS.plCard, {x = 12.8, y = 114.4, w = 264, h = 14, text = string.format(STR.UI.FEED_LIMIT_NOTE, CONFIG.FEED_SENDER_LIMIT, CONFIG.FEED_VIEWER_LIMIT), size = 9.5, color = TH.dim})
     -- Gráfica de eventos por segundo
-    local ch = box(page, 0.6, L.CHART_Y - PAGE_Y, L.MAIN_W - 1.2, L.CHART_H, TH.card, 8, TH.border, 12)
+    local ch = box(page, 0.6, L.CHART_Y - L.PAGE_Y, L.MAIN_W - 1.2, L.CHART_H, TH.card, 8, TH.border, 12)
     label(ch, {x = 12.2, y = 11, w = 300, h = 15, text = string.format(STR.UI.CHART, L.CHART_SECONDS), size = 11.5, font = FONT.semi})
     LOGS.peak = label(ch, {x = 400, y = 11, w = 174, h = 15, text = "", size = 9.5, color = TH.dim, align = "R"})
     LOGS.bars = {}
@@ -2502,6 +2752,7 @@ do
     label(ch, {x = 12.2, y = 99, w = 80, h = 14, text = ax[1], size = 9.5, color = TH.dim})
     label(ch, {x = 253, y = 99, w = 80, h = 14, text = ax[2], size = 9.5, color = TH.dim, align = "C"})
     label(ch, {x = 494, y = 99, w = 80, h = 14, text = ax[3], size = 9.5, color = TH.dim, align = "R"})
+    end
 end
 
 local function topList(map, n)
@@ -2515,6 +2766,7 @@ local function topList(map, n)
 end
 
 local function renderLogsCharts()
+    if not LOGS.remRows then return end
     -- Remotos más activos: lo que te llega (OnClientEvent) + lo que registra tu servidor.
     local merged = {}
     for _, e in ipairs(REG.remotes) do if e.count > 0 and e.name ~= CONFIG.FEED_REMOTE then merged[e.name] = (merged[e.name] or 0) + e.count end end
@@ -2553,9 +2805,8 @@ local function renderLogsCharts()
     local maxH = 57.6
     for b, f in ipairs(LOGS.bars) do
         local h = peak > 0 and math.max(2, vals[b] / peak * maxH) or 2
-        f.Size = UDim2.fromOffset(f.Size.X.Offset, h)
-        f.Position = UDim2.fromOffset(f.Position.X.Offset, 92.1 - h)
-        f.BackgroundColor3 = (b == peakI and peak > 0) and TH.warn or TH.cyan
+        tw(f, {Size = UDim2.fromOffset(f.Size.X.Offset, h), Position = UDim2.fromOffset(f.Position.X.Offset, 92.1 - h)}, CONFIG.ANIM.BAR)
+        put(f, "BackgroundColor3", (b == peakI and peak > 0) and TH.warn or TH.cyan)
     end
     local maxSec = 0
     for _, v in ipairs(PERF.eps) do if v > maxSec then maxSec = v end end
@@ -2567,7 +2818,7 @@ local function renderLogs()
     LOGS.count.Text = string.format(STR.UI.COUNT, #list, LOG.n)
     LOGS.chips.refresh()
     LOGS.pause.Text = LOG.paused and STR.RESUME or STR.PAUSE
-    if UI.sel == nil and list[1] then UI.sel = list[1].id; eventCard(list[1]) end
+    if IS_PC and UI.sel == nil and list[1] then UI.sel = list[1].id; eventCard(list[1]) end
     if #list == 0 then
         local filtered = MODE.def.id ~= "normal" or FEED.filter ~= "all"
         LOGS.table.set({{cells = {"", "", "", LOG.paused and STR.LOGS_PAUSED or STR.NO_LOGS,
@@ -2592,8 +2843,8 @@ do
     })
     MAINP.buttons[4].Visible = CAP.queue_on_teleport ~= nil
     local C = STR.UI.COLS_MAIN
-    UI.lists.MAIN = UI.table(page, 0, CHIPS_Y, L.MAIN_W, PAGE_H - CHIPS_Y, {
-        {title = C[1], x = 14, w = 160, kind = "strong"}, {title = C[2], x = 180, w = 396, kind = "text", rich = true}})
+    UI.lists.MAIN = UI.table(page, 0, CHIPS_Y, L.MAIN_W, PAGE_H.MAIN - CHIPS_Y, {
+        {title = C[1], x = IS_PC and 14 or 10, w = IS_PC and 160 or 150, kind = "strong"}, {title = C[2], x = IS_PC and 180 or 166, w = IS_PC and 396 or 420, kind = "text", rich = true}})
 end
 
 local function renderMain()
@@ -2671,7 +2922,7 @@ local RPAGE = {}
 do
     local page = UI.pages.REMOTES
     UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.REMOTE_SEARCH, function(t) remoteState.q = t; UI.force = true end)
-    toolbarRow(page, 333.6, {
+    toolbarRow(page, TOOLBAR_X, {
         {text = string.format(STR.SORT_BTN, SORTS[remoteState.sort]), w = 120, fg = TH.text, bg = TH.chip, fn = function(b)
             remoteState.sort = remoteState.sort % #SORTS + 1
             b.Text = string.format(STR.SORT_BTN, SORTS[remoteState.sort])
@@ -2689,10 +2940,13 @@ do
     RPAGE.chips = UI.chips(page, 0, CHIPS_Y, labels, function(i) return remoteState.cls == i end,
         function(i) remoteState.cls = i; CFG.set("remoteCls", i) end)
     local C = STR.UI.COLS_REMOTES
-    UI.lists.REMOTES = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H - TABLE_Y, {
+    UI.lists.REMOTES = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H.REMOTES - TABLE_Y, IS_PC and {
         {title = C[1], x = 14, w = 120, kind = "strong"}, {title = C[2], x = 140, w = 90, kind = "badge"},
         {title = C[3], x = 270, w = 90, kind = "dim"}, {title = C[4], x = 362, w = 60, kind = "mono"},
-        {title = C[5], x = 424, w = 80, kind = "mono"}, {title = C[6], x = 506, w = 76, kind = "mono"}})
+        {title = C[5], x = 424, w = 80, kind = "mono"}, {title = C[6], x = 506, w = 76, kind = "mono"}} or {
+        {title = C[1], x = 10, w = 140, kind = "strong"}, {title = C[2], x = 154, w = 110, kind = "badge"},
+        {title = C[3], x = 300, w = 90, kind = "dim"}, {title = C[4], x = 394, w = 70, kind = "mono"},
+        {title = C[5], x = 468, w = 120, kind = "mono"}})
 end
 local function renderRemotes()
     local list = filteredRemotes()
@@ -2742,7 +2996,7 @@ do
     local page = UI.pages.TOOLS
     local tb = UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.TOOL_FILTER, function(t) toolState.q = t; UI.force = true end)
     U.conn(tb.FocusLost, function(enter) if enter and toolState.mode == 3 then runSearch(tb.Text) end end, "buscar enter")
-    toolbarRow(page, 333.6, {
+    toolbarRow(page, TOOLBAR_X, {
         {text = STR.SEARCH, w = 64, fg = TH.cyan, bg = TH.chip, fn = function() toolState.mode = 3; TPAGE.chips.refresh(); runSearch(tb.Text) end},
         {text = STR.COPY, w = 54, fg = TH.ok, bg = TH.btnGreen, fn = function()
             local t = {string.format(STR.DET.TOOLS_HEAD, TOOL_MODES[toolState.mode])}
@@ -2752,7 +3006,7 @@ do
     })
     TPAGE.chips = UI.chips(page, 0, CHIPS_Y, TOOL_MODES, function(i) return toolState.mode == i end, function(i) toolState.mode = i end)
     local C = STR.UI.COLS_TOOLS
-    UI.lists.TOOLS = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H - TABLE_Y, {
+    UI.lists.TOOLS = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H.TOOLS - TABLE_Y, {
         {title = C[1], x = 14, w = 150, kind = "strong"}, {title = C[2], x = 170, w = 90, kind = "text"},
         {title = C[3], x = 262, w = 120, kind = "dim"}, {title = C[4], x = 384, w = 198, kind = "mono"}})
 end
@@ -2832,7 +3086,7 @@ local BPAGE = {}
 do
     local page = UI.pages.BUTTONS
     UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.BTN_SEARCH, function(t) btnState.q = t; UI.force = true end)
-    toolbarRow(page, 333.6, {
+    toolbarRow(page, TOOLBAR_X, {
         {text = STR.COPY, w = 54, fg = TH.ok, bg = TH.btnGreen, fn = function()
             local t = {STR.DET.BUTTONS_HEAD}
             for _, e in ipairs(REG.buttons) do
@@ -2844,7 +3098,7 @@ do
     })
     BPAGE.chips = UI.chips(page, 0, CHIPS_Y, BTN_FILTERS, function(i) return btnState.f == i end, function(i) btnState.f = i end)
     local C = STR.UI.COLS_BUTTONS
-    UI.lists.BUTTONS = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H - TABLE_Y, {
+    UI.lists.BUTTONS = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H.BUTTONS - TABLE_Y, {
         {title = C[1], x = 14, w = 150, kind = "strong"}, {title = C[2], x = 170, w = 110, kind = "dim"},
         {title = C[3], x = 282, w = 70, kind = "text"}, {title = C[4], x = 354, w = 50, kind = "mono"}, {title = C[5], x = 406, w = 176, kind = "mono"}})
 end
@@ -2921,7 +3175,7 @@ do
         {text = STR.BTN_PERF_NOTES, w = 140, fg = TH.violet, bg = TH.btnViolet, fn = function() UI.detail(STR.NOTES_TITLE, STR.PERF_NOTES) end},
     })
     local C = STR.UI.COLS_PERF
-    UI.lists.PERFORMANCE = UI.table(page, 0, CHIPS_Y, L.MAIN_W, PAGE_H - CHIPS_Y, {
+    UI.lists.PERFORMANCE = UI.table(page, 0, CHIPS_Y, L.MAIN_W, PAGE_H.PERFORMANCE - CHIPS_Y, {
         {title = C[1], x = 14, w = 130, kind = "strong"}, {title = C[2], x = 150, w = 120, kind = "mono"}, {title = C[3], x = 276, w = 306, kind = "dim"}})
 end
 local function renderPerf()
@@ -2952,49 +3206,61 @@ end
 function UI.renderChrome()
     -- Barra de título
     local feedOn = FEED.remote ~= nil
-    W.pillDot.BackgroundColor3 = feedOn and TH.ok or TH.dotOff
-    W.pillText.Text = not feedOn and STR.UI.FEED_PILL_NONE or
-        string.format((FEED.serverMode ~= nil and FEED.label(FEED.serverMode) == FEED.label()) and STR.UI.FEED_PILL or STR.UI.FEED_PILL_PENDING, U.esc(FEED.label()))
-    W.scaleBtn.Text = UI.scaleLabel()
+    put(W.pillDot, "BackgroundColor3", feedOn and TH.ok or TH.dotOff)
+    if IS_PC then
+        put(W.pillText, "Text", not feedOn and STR.UI.FEED_PILL_NONE or
+            string.format((FEED.serverMode ~= nil and FEED.label(FEED.serverMode) == FEED.label()) and STR.UI.FEED_PILL or STR.UI.FEED_PILL_PENDING, U.esc(FEED.label())))
+    else
+        put(W.pillText, "Text", feedOn and string.format(STR.UI.FEED_SHORT, U.esc(FEED.label())) or STR.UI.FEED_SHORT_NONE)
+    end
+    put(W.scaleBtn, "Text", UI.scaleLabel())
     -- Lateral
     local counts = {REMOTES = #REG.remotes, TOOLS = #REG.tools, BUTTONS = #REG.buttons, LOGS = LOG.total}
     for name, t in pairs(SIDE.tabs) do
         local on = name == UI.tab
-        t.b.BackgroundTransparency = on and 0 or 1
-        t.bar.Visible = on
-        t.name.TextColor3 = on and TH.cyan or TH.dim
-        setFont(t.name, on and FONT.semi or FONT.sans)
-        t.count.Text = counts[name] and fmtInt(counts[name]) or ""
-        t.count.TextColor3 = on and TH.cyan or TH.dim
+        put(t.b, "BackgroundTransparency", on and 0 or 1)
+        put(t.bar, "Visible", on)
+        put(t.name, "TextColor3", on and TH.cyan or TH.dim)
+        if t.bold ~= on then t.bold = on; setFont(t.name, on and FONT.semi or FONT.sans) end
+        put(t.count, "Text", counts[name] and fmtInt(counts[name]) or "")
+        put(t.count, "TextColor3", on and TH.cyan or TH.dim)
     end
     local segOn = FEED.filter == "all" and 1 or (FEED.filter == "me" and 2 or 3)
-    for i, b in ipairs(SIDE.seg) do
-        b.BackgroundTransparency = (i == segOn) and 0 or 1
-        b.TextColor3 = (i == segOn) and TH.cyan or TH.dim
-        if i == 3 then b.Text = (segOn == 3) and FEED.label() or STR.UI.SEG[3] end
+    -- TP a un jugador por UserId: solo en tu juego (lo hace tu script de Studio, que valida todo).
+function UI.tp(userId, name)
+    if not FEED.tpRemote then UI.toast(STR.UI.TP_NONE) return end
+    if FEED.tp(userId) then UI.toast(string.format(STR.UI.TP_SENT, tostring(name))) end
+end
+FEED.onTp = function(ok, msg) UI.toast(string.format(ok and STR.UI.TP_OK or STR.UI.TP_FAIL, msg)) end
+for i, b in ipairs(SIDE.seg) do
+        put(b, "BackgroundTransparency", (i == segOn) and 0 or 1)
+        put(b, "TextColor3", (i == segOn) and TH.cyan or TH.dim)
+        if i == 3 then put(b, "Text", (segOn == 3) and FEED.label() or (IS_PC and STR.UI.SEG[3] or STR.UI.SEG_SHORT[3])) end
     end
     for i, m in ipairs(SIDE.modes) do
         local on = i == MODE.index
-        m.b.BackgroundTransparency = on and 0 or 1
-        m.st.Transparency = on and 0 or 1
-        m.dot.BackgroundColor3 = on and TH.cyan or TH.dotOff
+        put(m.b, "BackgroundTransparency", on and 0 or 1)
+        put(m.st, "Transparency", on and 0 or 1)
+        put(m.dot, "BackgroundColor3", on and TH.cyan or TH.dotOff)
     end
+    if SIDE.modeBtn then put(SIDE.modeBtn, "Text", string.format(STR.UI.MODE_BTN, MODE.def.label)) end
     local yn = function(b) return b and STR.YES or STR.NO end
     local vals = {CAP.executor:match("^(%S+)") or CAP.executor, yn(CAP.setclipboard), yn(CAP.writefile), yn(CAP.writefile ~= nil and CAP.readfile ~= nil)}
     for i, l in ipairs(SIDE.info) do
-        l.Text = vals[i]
-        l.TextColor3 = (vals[i] == STR.YES) and TH.ok or ((vals[i] == STR.NO) and TH.bad or TH.text)
+        put(l, "Text", vals[i])
+        put(l, "TextColor3", (vals[i] == STR.YES) and TH.ok or ((vals[i] == STR.NO) and TH.bad or TH.text))
     end
     -- Tarjetas de métricas
     local U_ = STR.UI
     setMetric(METRIC.fps, fmt(PERF.fps, "%.0f"), string.format(U_.M_FPS_SUB, fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.0f", " ms")), MODE.def.graph and PERF.hist)
     setMetric(METRIC.ping, fmt(PERF.ping, "%.0f", " ms"), PERF.pingSrc ~= "" and PERF.pingSrc or STR.PERF.PING_NA, MODE.def.graph and PERF.pingHist)
     setMetric(METRIC.mem, fmt(PERF.mem, "%.0f", " MB"), string.format(U_.M_MEM_SUB, fmt(PERF.memScript, "%.0f", " MB"), fmt(PERF.luaHeap, "%.1f", " MB")), MODE.def.graph and PERF.memHist)
-    setMetric(METRIC.net, fmt(PERF.recv, "%.1f", " KB/s"), string.format(U_.M_NET_SUB, fmt(PERF.send, "%.1f", " KB/s")), MODE.def.graph and PERF.netHist)
+    if METRIC.net then setMetric(METRIC.net, fmt(PERF.recv, "%.1f", " KB/s"), string.format(U_.M_NET_SUB, fmt(PERF.send, "%.1f", " KB/s")), MODE.def.graph and PERF.netHist) end
     setMetric(METRIC.eps, string.format("%.1f", PERF.epsNow or 0), string.format(U_.M_EPS_SUB, LOG.suppressed), MODE.def.graph and PERF.eps)
-    setMetric(METRIC.console, string.format(U_.M_CONSOLE_VAL, CONSOLE.errors), string.format(U_.M_CONSOLE_SUB, CONSOLE.warnings), MODE.def.graph and PERF.consoleHist)
+    if METRIC.console then setMetric(METRIC.console, string.format(U_.M_CONSOLE_VAL, CONSOLE.errors), string.format(U_.M_CONSOLE_SUB, CONSOLE.warnings), MODE.def.graph and PERF.consoleHist) end
     -- Feed del servidor
     local sec = FEED.sec
+    if FC.v1 then
     FC.v1.Text = string.format(U_.FEED_PER_S, sec.lastTotal, CONFIG.FEED_VIEWER_LIMIT)
     FC.bar1(sec.lastTotal / CONFIG.FEED_VIEWER_LIMIT)
     FC.k2.Text = sec.lastTopName and string.format(U_.FEED_SENDER, sec.lastTopName) or U_.FEED_SENDER_NONE
@@ -3002,17 +3268,19 @@ function UI.renderChrome()
     FC.bar2(sec.lastTop / CONFIG.FEED_SENDER_LIMIT)
     FC.v3.Text = tostring(FEED.droppedByServer)
     FC.v4.Text = FEED.modeRemote and FEED.label(FEED.serverMode or FEED.filter) or "—"
+    end
     -- Barra de estado
-    ST.dot.BackgroundColor3 = LOG.paused and TH.warn or TH.ok
-    ST.live.Text = LOG.paused and U_.ST_PAUSED or U_.ST_LIVE
-    ST.live.TextColor3 = LOG.paused and TH.warn or TH.ok
-    local left = {string.format(U_.ST_REMOTES, #REG.remotes), string.format(U_.ST_LOGS, fmtInt(LOG.total)), string.format(U_.ST_SPAM, LOG.suppressed),
+    put(ST.dot, "BackgroundColor3", LOG.paused and TH.warn or TH.ok)
+    put(ST.live, "Text", LOG.paused and U_.ST_PAUSED or U_.ST_LIVE)
+    put(ST.live, "TextColor3", LOG.paused and TH.warn or TH.ok)
+    local left = IS_PC and {string.format(U_.ST_REMOTES, #REG.remotes), string.format(U_.ST_LOGS, fmtInt(LOG.total)), string.format(U_.ST_SPAM, LOG.suppressed),
         string.format(U_.ST_QUEUE, REG.pending(), math.floor(REG.qMax)), string.format(U_.ST_ERRORS, G.internalErrors)}
-    for i, t in ipairs(ST.left) do t.Text = left[i] end
+        or {string.format(U_.ST_LOGS, fmtInt(LOG.total)), string.format(U_.ST_SPAM, LOG.suppressed), string.format(U_.ST_ERRORS, G.internalErrors)}
+    for i, t in ipairs(ST.left) do put(t, "Text", left[i]) end
     local leftCap = MODE.captureLeft()
     local rightTxt = {string.format(U_.ST_MODE, MODE.def.label .. (leftCap and (" " .. leftCap .. "s") or "")), string.format(U_.ST_FPS, PERF.fps),
-        string.format(U_.ST_PING, fmt(PERF.ping, "%.0f", " ms")), string.format(U_.ST_VER, "1.2")}
-    for i, t in ipairs(ST.right) do t.Text = rightTxt[i] end
+        string.format(U_.ST_PING, fmt(PERF.ping, "%.0f", " ms")), string.format(U_.ST_VER, CONFIG.VERSION)}
+    for i, t in ipairs(ST.right) do put(t, "Text", rightTxt[i]) end
 end
 
 ---------------- Abrir / cerrar / pestañas / escala / minimizar / arrastre
@@ -3022,7 +3290,17 @@ function UI.setTab(name)
     detail.Visible = false
     picker.Visible = false
     for n, p in pairs(UI.pages) do p.Visible = (n == name) end
+    if METRIC.group then METRIC.group.Visible = (name == "MAIN" or name == "PERFORMANCE") end
+    if DC.holder then DC.holder.Visible = false end
     UI.force = true
+end
+
+-- Cambiar de versión (Móvil / PC): se guarda y el panel se reinicia en esa versión.
+function UI.setLayout(id)
+    if id == LAYOUT then return end
+    CFG.set("layout", id)
+    UI.toast(string.format(STR.UI.LAYOUT_SWITCH, id == "pc" and STR.UI.LAYOUT[2] or STR.UI.LAYOUT[1]))
+    task.delay(0.2, function() if G.restart then G.restart() end end)
 end
 for name, t in pairs(SIDE.tabs) do U.conn(t.b.Activated, function() UI.setTab(name) end, "pestaña " .. name) end
 
@@ -3039,12 +3317,15 @@ end
 function UI.applyLayout()
     local fits, ss, sc, h = fitsScreen()
     panel.Size = UDim2.fromOffset(L.PANEL_W, h)
-    sidebar.Visible, main.Visible, right.Visible, statusBar.Visible = not UI.collapsed, not UI.collapsed, not UI.collapsed, not UI.collapsed
+    local show = not UI.collapsed
+    sidebar.Visible, main.Visible, statusBar.Visible = show, show, show
+    if right then right.Visible = show end
+    if DC.holder and not show then DC.holder.Visible = false end
     local pw, ph = L.PANEL_W * sc, h * sc
     local margin = CONFIG.L.RADIUS
     local x, y
-    if pw <= ss.X then x = math.clamp(CFG.get("x", (ss.X - pw) / 2), 0, ss.X - pw) else x = margin end
-    if ph <= ss.Y then y = math.clamp(CFG.get("y", (ss.Y - ph) / 2), 0, ss.Y - ph) else y = margin end
+    if pw <= ss.X then x = math.clamp(CFG.get("x_" .. LAYOUT, (ss.X - pw) / 2), 0, ss.X - pw) else x = margin end
+    if ph <= ss.Y then y = math.clamp(CFG.get("y_" .. LAYOUT, (ss.Y - ph) / 2), 0, ss.Y - ph) else y = margin end
     panel.Position = UDim2.fromOffset(math.floor(x), math.floor(y))
     viewport.CanvasSize = UDim2.fromOffset(pw > ss.X and (pw + 2 * margin) or 0, ph > ss.Y and (ph + 2 * margin) or 0)
     viewport.ScrollingEnabled = not fits
@@ -3060,8 +3341,9 @@ end
 function UI.cycleScale()
     local cur, nextS = UI.scale(), CONFIG.SCALES[1]
     for i, v in ipairs(CONFIG.SCALES) do if math.abs(v - cur) < 0.01 then nextS = CONFIG.SCALES[i % #CONFIG.SCALES + 1] end end
-    uiScale.Scale = nextS
-    CFG.set("scale", nextS)
+    UI.targetScale = nextS
+    tw(uiScale, {Scale = nextS}, CONFIG.ANIM.OPEN)
+    CFG.set("scale_" .. LAYOUT, nextS)
     UI.applyLayout()
     UI.force = true
     return nextS
@@ -3072,8 +3354,19 @@ function UI.toggle(state)
     if state == nil then state = not UI.open end
     UI.open = state
     viewport.Visible = state
-    if state then UI.applyLayout(); UI.force = true end
+    if state then
+        UI.applyLayout()
+        uiScale.Scale = UI.targetScale * 0.94
+        tw(uiScale, {Scale = UI.targetScale}, CONFIG.ANIM.OPEN, Enum.EasingStyle.Quad)
+        UI.force = true
+    end
 end
+-- Tecla para abrir/cerrar (computadora o iPad con teclado). No actúa mientras escribes.
+U.conn(S.UIS.InputBegan, function(input, processed)
+    if processed then return end
+    local ok, key = pcall(function() return Enum.KeyCode[CONFIG.TOGGLE_KEY] end)
+    if ok and key and input.KeyCode == key then UI.toggle() end
+end, "tecla abrir")
 U.conn(closeBtn.Activated, function() UI.toggle(false) end, "cerrar")
 U.conn(minBtn.Activated, function() UI.collapsed = not UI.collapsed; UI.applyLayout() end, "minimizar")
 
@@ -3113,7 +3406,7 @@ end
 local function saveGeometry()
     pcall(function()
         CFG.set("fabX", fab.Position.X.Offset); CFG.set("fabY", fab.Position.Y.Offset)
-        if fitsScreen() then CFG.set("x", panel.Position.X.Offset); CFG.set("y", panel.Position.Y.Offset) end
+        if fitsScreen() then CFG.set("x_" .. LAYOUT, panel.Position.X.Offset); CFG.set("y_" .. LAYOUT, panel.Position.Y.Offset) end
     end)
 end
 draggable(fab, fab, function() return true end, function() UI.toggle() end, saveGeometry)
@@ -3243,7 +3536,14 @@ function G.destroy()
     pcall(function() screen:Destroy() end)
     if ENV.GOY_DIAG == G then ENV.GOY_DIAG = nil end
 end
+-- Reinicia todo el panel (lo usa el cambio de versión Móvil / PC).
+function G.restart()
+    G.destroy()
+    task.defer(START)
+end
 U.conn(screen.AncestryChanged, function() if not screen.Parent then G.destroy() end end, "GUI eliminada")
+
+end
 
 -------------------------------------------------------------------------------
 -- 13. STUDIO — generado por build.py desde GOY_Diagnostics_Studio_Server.lua (no editar aquí)
@@ -3251,7 +3551,7 @@ U.conn(screen.AncestryChanged, function() if not screen.Parent then G.destroy() 
 STUDIO_SCRIPT = [==[
 --[[
 ================================================================================
- GOY DIAGNOSTICS · SCRIPT DE SERVIDOR v1.2 (solo para TU propio juego)
+ GOY DIAGNOSTICS · SCRIPT DE SERVIDOR v1.3 (solo para TU propio juego)
  Dónde va: ServerScriptService → Script (no LocalScript).
 --------------------------------------------------------------------------------
  QUÉ HACE
@@ -3267,6 +3567,8 @@ STUDIO_SCRIPT = [==[
    · Cada espectador elige qué ver por GOY_DiagMode: "all" (todos), "me" (solo
      sus propios eventos) o un UserId presente. El filtro se aplica AQUÍ, antes
      de enviar: no se gasta red en lo que no ve.
+   · TP por GOY_DiagTP: un espectador autorizado puede ir junto a otro jugador
+     de ESTE juego (por UserId). Valida autorización, 1 TP/s y personajes.
    · Presupuesto por espectador y por emisor: el spam de un jugador no puede
      gastar el cupo de los demás, y tus propios eventos tienen cupo reservado.
 --------------------------------------------------------------------------------
@@ -3277,6 +3579,7 @@ STUDIO_SCRIPT = [==[
      reintenta; los fallos no se guardan).
    · Los UserId de AUTHORIZED.
 --------------------------------------------------------------------------------
+ CAMBIOS v1.3: GOY_DiagTP (TP a jugadores por UserId, solo autorizados).
  CAMBIOS v1.2: presupuesto por espectador/emisor · feed estructurado (tipo,
  remoto, jugador, userId, args, tipos) · modos all/me/UserId validados en el
  servidor (máx. 2 peticiones/s) · autorización en PlayerAdded sin cachear fallos
@@ -3299,6 +3602,9 @@ local CONFIG = {
     ARGS_MAX = 10, STR_MAX = 100, TABLE_ITEMS = 10, TABLE_DEPTH = 2,
     FEED_REMOTE = "GOY_DiagFeed",
     MODE_REMOTE = "GOY_DiagMode",
+    TP_REMOTE = "GOY_DiagTP",   -- TP a otro jugador, solo para autorizados y solo en este juego
+    TP_COOLDOWN = 1,            -- s entre TPs por jugador
+    TP_OFFSET = 4,              -- studs detrás del jugador destino
     PROTOCOL = 2,
 }
 
@@ -3469,7 +3775,35 @@ modeRemote.OnServerEvent:Connect(function(player, req)
     local mode = validMode(raw)
     if mode then v.mode = mode end
     feed:FireClient(player, {v = CONFIG.PROTOCOL, kind = "Mode", mode = v.mode, ok = mode ~= nil,
-        reason = mode and nil or "valor no válido (usa all, me o un UserId presente)"})
+        reason = (not mode) and "valor no válido (usa all, me o un UserId presente)" or nil})
+end)
+
+---------------------------------------------------------------- TP (GOY_DiagTP)
+-- Solo mueve al propio espectador autorizado junto a otro jugador de ESTE juego.
+local tpRemote = getRemote(CONFIG.TP_REMOTE)
+local lastTp = setmetatable({}, {__mode = "k"})
+local function rootOf(p)
+    local ch = p and p.Character
+    return ch and ch:FindFirstChild("HumanoidRootPart"), ch
+end
+tpRemote.OnServerEvent:Connect(function(player, req)
+    local function reply(ok, msg)
+        feed:FireClient(player, {v = CONFIG.PROTOCOL, kind = "TP", ok = ok, msg = msg})
+    end
+    if not viewers[player] then return end -- no autorizado: se ignora
+    local now = os.clock()
+    if lastTp[player] and now - lastTp[player] < CONFIG.TP_COOLDOWN then return reply(false, "espera un segundo") end
+    lastTp[player] = now
+    local id = tonumber(type(req) == "table" and req.userId or req)
+    local target = id and Players:GetPlayerByUserId(id)
+    if not target then return reply(false, "ese jugador no está en el servidor") end
+    if target == player then return reply(false, "no puedes hacer TP a ti mismo") end
+    local to = rootOf(target)
+    local from, ch = rootOf(player)
+    if not to or not from then return reply(false, "falta el personaje de alguno de los dos") end
+    ch:PivotTo(to.CFrame * CFrame.new(0, 0, CONFIG.TP_OFFSET))
+    print(("[GOY DIAG] TP: %s → %s"):format(player.Name, target.Name))
+    reply(true, "TP a " .. target.Name)
 end)
 
 ---------------------------------------------------------------- REGISTRO DE EVENTOS
@@ -3506,7 +3840,7 @@ end
 
 local hooked = setmetatable({}, {__mode = "k"})
 local function hook(obj)
-    if hooked[obj] or obj == feed or obj == modeRemote then return end
+    if hooked[obj] or obj == feed or obj == modeRemote or obj == tpRemote then return end
     local ok, isRemote = pcall(function() return obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") end)
     if ok and isRemote then
         hooked[obj] = true
@@ -3552,3 +3886,4 @@ end)
 
 print("[GOY DIAG] Instrumentación de servidor v1.2 activa.")
 ]==]
+START()
