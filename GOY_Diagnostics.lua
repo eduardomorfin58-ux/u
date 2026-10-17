@@ -1,48 +1,344 @@
 --[[
 ================================================================================
- GOY DIAGNOSTICS v1.1  ·  Advanced Remote & Server Diagnostics (solo lectura)
+ GOY DIAGNOSTICS v1.2  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
  Cliente Roblox · optimizado para iPhone + Delta
 --------------------------------------------------------------------------------
- QUÉ HACE (todo desde el cliente, sin tocar el juego):
-   · REMOTES  : encuentra RemoteEvent / UnreliableRemoteEvent / RemoteFunction /
-                BindableEvent / BindableFunction en los contenedores replicados y
-                registra lo que el cliente PUEDE observar: OnClientEvent (servidor
-                → cliente) y BindableEvent.Event (local).
-   · TOOLS    : herramientas que aparecen/desaparecen, equipadas/desequipadas,
-                contenedores, búsqueda de objetos e inspector de propiedades.
-   · BUTTONS  : TextButton / ImageButton de tu PlayerGui (texto, ruta, visible,
-                clics observados con .Activated).
-   · LOGS     : registro en tiempo real con hora, categoría, argumentos y tipos,
-                búsqueda, filtros, pausa, limpieza, copiar y exportar.
-   · PERFORMANCE: FPS, tiempo de frame, memoria, ping, red, errores de consola,
-                y el costo del propio monitor.
- QUÉ NO HACE (límites reales, no se intentan eludir):
-   · No ve lo que el cliente ENVÍA (FireServer / InvokeServer): no se hookea
-     __namecall ni se modifican metatablas.
-   · No ve RemoteFunction.OnClientInvoke ni BindableFunction.OnInvoke sin
-     REEMPLAZAR el callback del juego, así que solo se listan.
-   · No lee código del servidor ni eventos internos del servidor.
-   · Para eso: script de Studio (pestaña MAIN → "Copiar script de Studio"),
-     solo para TU propio juego.
+ QUÉ HACE (desde el cliente, sin tocar el juego):
+   · REMOTES    : RemoteEvent / UnreliableRemoteEvent / RemoteFunction /
+                  BindableEvent / BindableFunction replicados; registra lo que el
+                  cliente PUEDE observar: OnClientEvent y BindableEvent.Event.
+   · TOOLS      : herramientas, contenedores, búsqueda e inspector de objetos.
+   · BUTTONS    : botones de tu PlayerGui y sus clics (.Activated).
+   · LOGS       : registro en vivo con filtros, jugadores, modos, copia y export.
+   · PERFORMANCE: FPS, frame, memoria, ping, red, consola y costo del monitor.
+ QUÉ NO HACE (límites reales, no se eluden):
+   · No ve lo que el cliente ENVÍA (FireServer / InvokeServer): no hay hooks de
+     __namecall ni se tocan metatablas.
+   · No reemplaza callbacks del juego (OnClientInvoke / OnInvoke solo se listan).
+   · No lee código ni eventos internos del servidor.
+   · Para ver lo que llega al servidor en TU juego: MAIN → "Script Studio".
+--------------------------------------------------------------------------------
+ ORIGEN Y BUILD
+   Este archivo se genera con build.py a partir de las secciones s01..s12 y de
+   GOY_Diagnostics_Studio_Server.lua (único origen del script de servidor,
+   que se incrusta en la sección 13). No edites la sección 13 a mano.
+--------------------------------------------------------------------------------
+ SECCIONES
+   1 CONFIG (+STR) · 2 CAP · 3 UTIL · 4 LOG · 5 REG · 6 FEED · 7 MODOS ·
+   8 PERF · 9 UI · 10 PESTAÑAS · 11 BUCLE (+arranque) · 12 LIMPIEZA · 13 STUDIO
 --------------------------------------------------------------------------------
  CAMBIOS
- v1.1 · Valores sin duplicados (registro débil, se descuentan al eliminarse) ·
-        historial de errores internos con traceback · limitadores con nombre ·
-        DescendantAdded en cola procesada por lotes (presupuesto de ms por frame) ·
-        lista virtual (solo se dibujan las filas visibles) · métricas solo en
-        MAIN/PERFORMANCE · botones táctiles de 44 px · safe area · panel limitado a
-        la pantalla, redimensionable, escala de interfaz · configuración guardada ·
-        recarga opcional tras teletransporte · script de Studio corregido.
+ v1.2 · Feed del servidor estructurado (tipo, remoto, jugador, userId, args,
+        tipos) con límite propio de 60/s · botón JUGADORES (Todos / Solo yo /
+        Elegir…) filtrado en el servidor por GOY_DiagMode y también en el
+        cliente · 7 modos (Normal, Solo servidor, Alertas, Cambios, Captura,
+        Ahorro, Silencioso) ampliables en CONFIG.MODES · aviso de spam emitido
+        también por temporizador · escala 65–130 % con etiqueta redondeada ·
+        lista virtual corregida para UIScale · giro de pantalla respeta el panel
+        minimizado · recarga tras teletransporte con confirmación y URL visible ·
+        CONFIG y STR únicos · secciones numeradas · build.py real.
+        Servidor: presupuesto por espectador y por emisor (tus eventos nunca se
+        pierden por el spam de otro), autorización resuelta en PlayerAdded sin
+        cachear fallos, filtro de modo en el servidor validado (2 pet./s).
+ v1.1 · Valores sin duplicados · historial de errores con traceback · cola por
+        lotes · lista virtual · botones de 44 px · safe area · configuración.
  v1.0 · Primera versión.
 ================================================================================
 ]]
+
+-------------------------------------------------------------------------------
+-- 1. CONFIG — todas las constantes en un solo lugar
+-------------------------------------------------------------------------------
+local CONFIG = {
+    VERSION = "1.2",
+
+    -- Registro
+    LOG_MAX = 700,                 -- entradas en el búfer circular
+    RATE_PER_SOURCE = 12,          -- registros/s por remoto, valor, consola…
+    RATE_FEED = 60,                -- registros/s del feed del servidor (GOY_DiagFeed)
+    RATE_WINDOW = 1,               -- ventana del limitador (s)
+    SPAM_NOTICE_CHECK = 0.5,       -- cada cuánto se emiten avisos de spam pendientes (s)
+    MAX_ERRORS = 30,               -- historial de errores internos
+    ARGS_MAX = 10,                 -- argumentos serializados por evento
+    SER_DEPTH = 3, SER_ITEMS = 12, SER_BUDGET = 80, SER_STR = 120, SER_PATH = 90,
+    PREVIEW_CHARS = 180,           -- vista previa de argumentos en una fila
+
+    -- Escaneo y registros de objetos
+    WATCH_NAMES = {"Workspace", "ReplicatedStorage", "ReplicatedFirst", "Players", "Lighting",
+        "StarterGui", "StarterPack", "StarterPlayer", "SoundService", "Teams", "Chat", "TextChatService"},
+    MAX_VALUES = 250,              -- ValueBase vigilados a la vez
+    MAX_WATCH = 8,                 -- objetos vigilados con .Changed desde el inspector
+    MAX_SEARCH = 200,              -- resultados de búsqueda de objetos
+    SCAN_YIELD_EVERY = 400,        -- objetos por frame en el escaneo inicial
+    SEARCH_YIELD_EVERY = 500,
+    QUEUE_BUDGET_MS = 1.5,         -- ms por frame para procesar DescendantAdded
+    QUEUE_CHECK_EVERY = 16,        -- cada cuántos objetos se mira el reloj
+
+    -- Feed del servidor (solo existe en TU juego con el script de Studio)
+    FEED_REMOTE = "GOY_DiagFeed",
+    MODE_REMOTE = "GOY_DiagMode",
+    MODE_REQ_PER_SEC = 2,          -- peticiones de modo de jugadores por segundo
+    FEED_PROTOCOL = 2,
+
+    -- Modos
+    CAPTURE_SECONDS = 30,
+    PING_ALERT_MS = 200,
+    FPS_ALERT = 20,
+    PERF_ALERT_COOLDOWN = 10,      -- s entre alertas repetidas de ping/FPS
+    MODES = {
+        -- id, etiqueta, filtro de categorías, solo alertas, dibuja, multiplicador de refresco,
+        -- muestreo de métricas (s), máximo de filas, gráfica, captura
+        {id = "normal",  label = "Normal",        tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "server",  label = "Solo servidor", cats = {Servidor = true}, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "alerts",  label = "Alertas",       alertsOnly = true, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "changes", label = "Cambios",       cats = {Valor = true, Cambio = true, Tool = true}, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "capture", label = "Captura",       capture = true, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "saver",   label = "Ahorro",        tickMul = 3, sampleEvery = 2, maxRows = 60, graph = false},
+        {id = "silent",  label = "Silencioso",    silent = true, tickMul = 3, sampleEvery = 2, graph = false},
+    },
+
+    -- Interfaz
+    TOUCH = 44,                    -- alto mínimo táctil (px)
+    HEADER_H = 52, TAB_BAR_H = 46, TOOLBAR_H = 48, FOOTER_H = 20, GAP = 4, MARGIN = 8,
+    TAB_W = 96, TAB_W_WIDE = 122,
+    ROW_H = 56, ROW_GAP = 5, ROW_SPARE = 3,
+    FAB_SIZE = 60,
+    PANEL_MIN_W = 300, PANEL_MIN_H = 240, PANEL_VP_W = 0.92, PANEL_VP_H = 0.86, SCREEN_PAD = 8,
+    DRAG_THRESHOLD = 8,
+    SCALES = {0.65, 0.85, 1, 1.15, 1.3},
+    DETAIL_CHUNK = 2500, DETAIL_MAX = 60000,
+    TOAST_SEC = 2.6,
+    PERF_HISTORY = 30,             -- segundos de la gráfica de FPS
+    MAIN_RECENT = 5,               -- eventos recientes en MAIN
+
+    -- Refresco
+    TICK = 0.35,                   -- periodo del bucle (s)
+    REFRESH = {MAIN = 1, PERFORMANCE = 1, BUTTONS = 2, REMOTES = 1.5, TOOLS = 1.5, LOGS = 1.5},
+    REFRESH_ON_CHANGE = 0.3,       -- mínimo entre redibujos cuando cambió algo
+    REFRESH_SAFETY_MUL = 3,        -- redibujo de seguridad (textos con hora)
+
+    -- Archivos y recarga
+    FOLDER = "GOY_Diag",
+    CFG_FILE = "config.json",
+    CFG_FLUSH_SEC = 2,
+    RELOAD_URL = "https://raw.githubusercontent.com/eduardomorfin58-ux/u/main/GOY_Diagnostics.lua",
+}
+
+local STUDIO_SCRIPT -- se asigna en la sección 13
+
+-------------------------------------------------------------------------------
+-- 1.1 STR — todo el texto de la interfaz
+-------------------------------------------------------------------------------
+local STR = {
+    TITLE = '<font color="#00DCFF">GOY</font> DIAGNOSTICS <font color="#8C96AF">· solo lectura</font>',
+    FAB = "GOY", CLOSE = "×", MIN = "–", GRIP = "◢",
+    TABS = {"MAIN", "REMOTES", "TOOLS", "BUTTONS", "LOGS", "PERFORMANCE"},
+    -- Comunes
+    COPY = "Copiar", EXPORT = "Exportar", SEARCH = "Buscar", CLOSE_BTN = "Cerrar", CONFIRM = "Confirmar",
+    DETAIL = "Detalle", NA = "no disponible", YES = "sí", NO = "no",
+    COPIED = "Copiado al portapapeles (%d caracteres)",
+    NO_CLIPBOARD = "Este ejecutor no permite copiar: se muestra el texto para seleccionarlo",
+    SAVED = "Guardado: %s", EXPORT_FAIL = "No se pudo exportar: %s",
+    NO_WRITEFILE = "writefile no disponible en este ejecutor",
+    DETAIL_CUT = "\n… (recortado en pantalla; Copiar copia todo)",
+    -- Footer
+    FOOTER = '<font color="%s">%s</font> · %s · %s · remotos %d · registros %d%s · FPS %.0f',
+    LIVE = "EN VIVO", PAUSED = "EN PAUSA", SPAM_SUFFIX = " (spam %d)",
+    -- MAIN
+    BTN_SUMMARY = "Copiar resumen", BTN_LIMITS = "Limitaciones", BTN_STUDIO = "Script Studio",
+    BTN_SCALE = "Escala %d%%", BTN_OFF = "Apagar",
+    BTN_TELEPORT = "Teleport: %s", TELEPORT_ON = "recargar", TELEPORT_OFF = "no",
+    TELEPORT_TITLE = "Recargar tras teletransporte",
+    TELEPORT_BODY = "Al teletransportarte, Delta ejecutará este código en el siguiente servidor:\n\n  loadstring(game:HttpGet(\"%s\"))()\n\nEso descarga y ejecuta lo que haya en esa URL en ese momento. Actívalo solo si la URL es tuya y confías en su contenido.\nToca «Confirmar» para activarlo.",
+    TELEPORT_DONE_ON = "Se recargará tras teletransporte desde la URL confirmada",
+    TELEPORT_DONE_OFF = "No se recargará tras teletransporte",
+    STUDIO_TITLE = "Script de Studio (servidor, solo tu juego)",
+    LIMITS_TITLE = "Qué funciona y qué no",
+    SUMMARY_TITLE = "Resumen",
+    MAIN_ACTIVE = "● Monitor activo", MAIN_PAUSED = "(registro en pausa)",
+    MAIN_EXEC = "Ejecutor: %s · copiar %s · exportar %s · táctil %s",
+    MAIN_COMM = "Objetos de comunicación: %d",
+    MAIN_COMM_SUB = "RE %d · URE %d · RF %d · BE %d · BF %d · con actividad %d",
+    MAIN_TOOLS = "Herramientas: %d", MAIN_BUTTONS = "Botones: %d",
+    MAIN_INST = "Instancias +%d / −%d desde el inicio · revisados %d%s", SCANNING = " (escaneando…)",
+    MAIN_LOGS = "Registros: %d",
+    MAIN_LOGS_SUB = "guardados %d/%d · %.1f/s · spam no guardado %d · en pausa %d",
+    MAIN_PERF = "FPS %.0f", MAIN_PING = "Ping %.0f ms", MAIN_PING_NA = "Ping n/d", MAIN_MEM = "Mem %.0f MB", MAIN_MEM_NA = "Mem n/d",
+    MAIN_PERF_SUB = "Errores %d · advertencias %d · errores internos del monitor %d",
+    MAIN_FEED = "Servidor instrumentado: %s",
+    MAIN_FEED_SUB = "modo pedido %s · confirmado %s · feed %d recibidos · %d descartados por el servidor",
+    MAIN_FEED_NONE = "No (este juego no tiene tu script de Studio)",
+    MAIN_FEED_YES = "Sí (GOY_DiagFeed encontrado)",
+    MAIN_MODE = "Modo: %s · Jugadores: %s",
+    MAIN_MODE_SUB = "Toca los botones Modo y Jugadores de arriba para cambiarlos",
+    MAIN_CAPTURE = "Captura: %s", MAIN_CAPTURE_SUB = "Toca para ver el resumen y exportarlo",
+    MAIN_INFO = "ⓘ Qué se observa y qué requiere servidor",
+    MAIN_INFO_SUB = "Toca para ver las limitaciones reales y la alternativa de Studio",
+    -- Jugadores
+    BTN_PLAYERS = "Jugadores: %s",
+    PLAYERS_ALL = "Todos", PLAYERS_ME = "Solo yo", PLAYERS_PICK = "Elegir…", PLAYERS_ONE = "%s",
+    PICK_TITLE = "Elegir jugador", PICK_SUB = "UserId %d%s", PICK_YOU = " · tú",
+    PLAYERS_SENT = "Filtro de jugadores: %s (pedido al servidor)",
+    PLAYERS_LOCAL = "Filtro de jugadores: %s (solo en el cliente: este juego no tiene GOY_DiagMode)",
+    -- Modos
+    BTN_MODE = "Modo: %s",
+    MODE_SET = "Modo %s",
+    CAPTURE_START = "Capturando %d s…", CAPTURE_LEFT = "captura %ds",
+    CAPTURE_DONE = "Captura terminada: %d eventos en %d s",
+    CAPTURE_TITLE = "Resumen de captura",
+    CAPTURE_NONE = "Todavía no hay captura. Elige el modo Captura.",
+    SILENT_ALERT = "Alerta: %s",
+    -- REMOTES
+    REMOTE_SEARCH = "Nombre, ruta, clase…",
+    CLS_FILTERS = {"Todas", "RemoteEvent", "UnreliableRemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Con actividad"},
+    CLS_SHORT = {Todas = "Clase: todas", RemoteEvent = "RemoteEvent", UnreliableRemoteEvent = "Unreliable", RemoteFunction = "RemoteFunction",
+        BindableEvent = "BindableEvent", BindableFunction = "BindableFunc", ["Con actividad"] = "Con actividad"},
+    SORTS = {"Actividad", "Nombre", "Ruta"}, SORT_BTN = "Orden: %s",
+    REMOTES_TITLE = "Remotos", REMOTES_COPY_HEAD = "GOY Diagnostics · remotos (%s)",
+    REMOTE_ROW_SUB = "%s · %s%s · %s", REMOTE_NOT_OBS = "  (no observable)",
+    REMOTE_SEE_LOGS = "Ver en LOGS", NO_RESULTS = "Sin resultados", SCANNING_T = "Escaneando…",
+    NO_RESULTS_SUB = "Cambia la búsqueda o el filtro",
+    DIR_RE = "Servidor → Cliente (OnClientEvent observado)", DIR_BE = "Local (BindableEvent.Event observado)",
+    DIR_RF = "No observable: OnClientInvoke solo se ve reemplazando el callback (no se hace)",
+    DIR_BF = "No observable: OnInvoke solo se ve reemplazando el callback (no se hace)",
+    REMOTE_OBS = "Observado directamente desde el cliente.",
+    REMOTE_NOOBS = "Solo listado: observarlo exigiría reemplazar el callback del juego. Para verlo, instrumenta TU servidor con el Script de Studio.",
+    REMOTE_NOSEND = "Lo que el cliente envía al servidor con este objeto NO se observa (requiere instrumentación del servidor).",
+    -- TOOLS
+    TOOL_MODES = {"Herramientas", "Contenedores", "Buscar objetos", "Vigilados"},
+    TOOL_FILTER = "Filtrar / buscar…", MIN_CHARS = "Escribe al menos 2 letras",
+    FOUND = "%d objetos encontrados%s", FOUND_LIMIT = " (límite %d)",
+    NO_TOOLS = "No hay herramientas visibles", NO_TOOLS_SUB = "Solo se ven las replicadas a tu cliente (tu Backpack y personajes)",
+    CONT_ROW = "%d objetos", CONT_SUB = "+%d / −%d desde el inicio · toca para inspeccionar",
+    SERVER_ONLY = "ServerStorage / ServerScriptService", SERVER_ONLY_SUB = "No accesibles desde el cliente (no se replican)",
+    WS_LOG = "Registrar instancias nuevas de Workspace: %s", WS_LOG_SUB = "Toca para cambiar (puede generar mucho registro en juegos con proyectiles)",
+    SEARCHING = "Buscando…", SEARCHING_SUB = "Por partes, sin congelar el juego",
+    SEARCH_HINT = "Escribe un nombre y toca Buscar", SEARCH_HINT_SUB = "Busca en todos los contenedores accesibles (máx. %d)",
+    NO_WATCH = "Nada vigilado", NO_WATCH_SUB = "Abre un objeto en el inspector y toca «Vigilar cambios»",
+    WATCH_ON = "Vigilando .Changed de este objeto (máx. %d)", WATCH_OFF = "Ya no se vigila",
+    WATCH_BTN = "Vigilar cambios", UNWATCH_BTN = "Dejar de vigilar", INSPECT = "Inspeccionar", INSPECTOR = "Inspector · %s",
+    TOOL_STATE_EQUIPPED = "equipada",
+    -- BUTTONS
+    BTN_SEARCH = "Texto, nombre, ruta…", BTN_FILTERS = {"Todos", "Visibles", "Ocultos", "Con clics"},
+    NO_BUTTONS = "Sin botones con este filtro", NO_BUTTONS_SUB = "Solo se exploran los botones de tu PlayerGui",
+    VISIBLE = "visible", HIDDEN = "oculto",
+    -- LOGS
+    LOG_SEARCH = "Buscar en registros…", CAT_BTN = "Categoría: %s",
+    PAUSE = "Pausa", RESUME = "Reanudar", CLEAR = "Limpiar", CLEARED = "Historial limpio",
+    NO_LOGS = "Sin registros todavía", LOGS_PAUSED = "Registro en pausa",
+    NO_LOGS_SUB = "Aparecen cuando el servidor te envía señales, cambian tus herramientas o valores, o tocas botones",
+    MODE_EMPTY_SUB = "El modo %s oculta el resto · Jugadores: %s",
+    LOGS_TITLE = "Registros", LOGS_COPY_HEAD = "GOY Diagnostics · registros (%s) · modo %s · jugadores %s",
+    -- PERFORMANCE
+    BTN_PERF_COPY = "Copiar métricas", BTN_PERF_NOTES = "¿Qué es aproximado?",
+    PERF_TITLE = "Rendimiento", NOTES_TITLE = "Cómo se mide", ERRORS_TITLE = "Errores internos (últimos %d)",
+    NO_INTERNAL = "Sin errores internos.",
+    -- Categorías y textos de registro
+    CATS = {"Todas", "Remote", "Bindable", "Tool", "Instancia", "Cambio", "Valor", "Botón", "Consola", "Servidor", "Sistema"},
+    LIMIT_NAME = "Límite: %s",
+    LIMIT_MSG = "%d eventos más en %d s no se guardaron en el registro (spam), sí se contaron",
+    NO_ARGS = "(sin argumentos)", MORE_ARGS = "… +%d argumentos",
+}
+
+STR.LIMITS = [[
+QUÉ FUNCIONA EN iPHONE CON DELTA (observado de verdad)
+• Lista de RemoteEvent, UnreliableRemoteEvent, RemoteFunction, BindableEvent y BindableFunction replicados al cliente. Se actualiza cuando aparecen o desaparecen.
+• Señales servidor → cliente: OnClientEvent (nombre, hora, argumentos, tipos, contador). Son siempre tuyas: el cliente no ve las de otros jugadores.
+• BindableEvent.Event (comunicación local del cliente).
+• Herramientas, valores y atributos de TU jugador/personaje, botones de tu PlayerGui y sus clics.
+• Errores y advertencias de la consola del cliente (LogService).
+• FPS, frame, memoria, ping, KB/s, física: lecturas aproximadas del cliente.
+
+QUÉ NO SE PUEDE DESDE EL CLIENTE (y no se intenta)
+• Lo que el cliente ENVÍA (FireServer / InvokeServer): requeriría hookear __namecall.
+• RemoteFunction.OnClientInvoke y BindableFunction.OnInvoke: solo se listan (no se reemplaza el callback).
+• Código y eventos internos del servidor, ServerStorage, ServerScriptService.
+• La función interna de un botón: se ve el clic, no lo que hace.
+• CPU/memoria del servidor, Script Profiler y MicroProfiler completos.
+
+PARA TU PROPIO JUEGO (Roblox Studio)
+• Pega el "Script Studio" (botón de MAIN) en ServerScriptService. Registra OnServerEvent y OnServerInvoke (con _G.GOYDiag.wrapInvoke) de tus remotos y los manda a este panel por GOY_DiagFeed (categoría "Servidor").
+• Botón Jugadores: Todos = eventos de todos; Solo yo = lo que TÚ envías al servidor; Elegir… = un jugador. El servidor filtra antes de enviar (GOY_DiagMode), así no se gasta red ni se pierden tus eventos.
+• En Studio usa también: F9 → Server, Script Profiler y MicroProfiler (Ctrl+F6).
+]]
+
+STR.PERF_NOTES = [[
+CÓMO SE MIDE CADA MÉTRICA (cliente, aproximado)
+• FPS: frames de RunService.RenderStepped por segundo. Real del cliente.
+• Tiempo de frame: promedio y máximo del delta de RenderStepped en el último segundo.
+• Memoria total: Stats:GetTotalMemoryUsageMb() del CLIENTE.
+• Memoria de scripts: Stats:GetMemoryUsageMbForTag(Script) del cliente.
+• Montón Lua: collectgarbage("count") del entorno de este script, no del juego entero.
+• Ping: Player:GetNetworkPing() (aproximado) o Stats "Data Ping" como respaldo.
+• Red: Stats.DataReceiveKbps / DataSendKbps del cliente.
+• Física: workspace:GetRealPhysicsFPS() del cliente.
+• En modo Ahorro se muestrea cada 2 s y no se dibuja la gráfica.
+
+NECESITA ROBLOX STUDIO O ACCESO AL SERVIDOR
+• CPU y memoria del servidor, Script Profiler, MicroProfiler y pestaña Server de la consola.
+• En tu juego: Script Studio (MAIN) envía métricas del servidor (ServerStats) al panel.
+]]
+
+-- Mensajes de registro, ubicaciones, direcciones, detalle y rendimiento
+STR.LOC = {PLAYER_GUI = "Tu PlayerGui", BACKPACK = "Tu Backpack", PLAYER = "Tu jugador", OUTSIDE = "fuera", IN_BACKPACK = "en Backpack", IN = "en %s"}
+STR.DIR = {S2C = "Servidor → Cliente", LOCAL = "Local", REPLICATED = "Replicado", REPLICATED_VALUE = "Servidor → Cliente (replicado)",
+    OBSERVED = "Observado", GUI = "Interfaz local", CONSOLE = "Consola del cliente", C2S = "Cliente → Servidor (%s)",
+    SERVER_NOTICE = "Aviso del servidor", SERVER_STATS = "Métricas del servidor"}
+STR.MSG = {
+    NEW_REMOTE = "Nuevo %s en %s", REMOVED = "%s eliminado: %s", NEW_INST = "Nueva %s en %s", INST_RATE = "instancias nuevas en %s",
+    TOOL_APPEARED = "Herramienta apareció", TOOL_MOVED = "Cambió de lugar", TOOL_EQUIPPED = "Equipada", TOOL_UNEQUIPPED = "Desequipada",
+    TOOL_USED = "Activada (usada)", TOOL_GONE = "Herramienta desapareció", TOOL_INFO = "%s · dueño: %s · %s",
+    BUTTON_TEXT = "texto: %s · ", BUTTON_NOTE = "%s · la función interna del botón no es visible",
+    ERROR = "Error", WARNING = "Advertencia", SCAN = "Escaneo inicial",
+    SCAN_DONE = "%d objetos revisados · %d remotos/bindables · %d herramientas · %d botones",
+    FEED_RATE = "feed del servidor", SPAM = "Spam · %s", FEED_DROPPED = "Feed recortado por el servidor", FEED_DROPPED_N = "%s mensajes",
+    SERVER_MODE = "Modo del servidor", PLAYERS = "Jugadores", MODE = "Modo", CAPTURE = "Captura",
+    PING_HIGH = "Ping alto", PING_HIGH_MSG = "%.0f ms (umbral %d ms)", FPS_LOW = "FPS bajos", FPS_LOW_MSG = "%.0f FPS (umbral %d)",
+    INTERNAL = "Error interno", INTERNAL_RATE = "errores internos", START = "v%s iniciado · ejecutor %s · solo lectura",
+    CHAR = "Personaje", CHAR_SPAWN = "Tu personaje apareció: %s", CHAR_DIED = "Tu Humanoid murió",
+    ATTR_PLAYER = "Jugador", ATTR_CHAR = "Personaje",
+}
+STR.CAPTURE_TXT = {
+    HEAD = "GOY Diagnostics · captura de %d s · %s", STATS = "Eventos: %d · promedio %.1f/s · pico %d/s (segundo %d)",
+    TOP = "Remotos / fuentes más activos:", PLAYERS = "Jugadores más activos (feed del servidor):",
+    NO_PLAYERS = "  (sin datos del servidor: el juego no tiene tu script de Studio)", CATS = "Por categoría:", PER_SEC = "Eventos por segundo:",
+}
+STR.DET = {
+    GONE = "El objeto ya no es accesible.", OBJECT = "Objeto: %s", PATH = "Ruta:   %s", ALIVE = "Sigue en el juego: %s",
+    PROPS = "— Propiedades consultables (las que el cliente puede leer) —", ATTRS = "— Atributos —", TAGS = "Tags: %s",
+    CHILDREN = "— Hijos directos: %d —", MORE = "… +%d", NOTE = "Nota: los scripts y su código fuente no se leen; solo propiedades replicadas.",
+    R_NAME = "Nombre:     %s", R_CLASS = "Clase:      %s", R_PATH = "Ruta:       %s", R_LOC = "Ubicación:  %s", R_DIR = "Dirección:  %s",
+    R_SEEN = "Detectado:  %s", R_COUNT = "Recibidos:  %d%s", R_LAST = "  (último %s)", R_ARGS = "Últimos argumentos (%s):", R_NOARGS = "(aún no recibido)",
+    B_NAME = "Nombre:   %s", B_CLASS = "Clase:    %s", B_PATH = "Ruta:     %s", B_TEXT = "Texto:    %s", B_NOTEXT = "(ImageButton sin texto)",
+    B_VIS = "Visible:  propio %s · en pantalla %s", B_ACTIVE = "Active:   %s · Interactable %s", B_IMAGE = "Imagen:   %s",
+    B_CLICKS = "Clics observados: %d%s", B_NOTE = "Se registra Activated. La función interna del botón NO es accesible: solo se ve el clic\ny lo que llegue después (por ejemplo una señal en LOGS justo después).",
+    TOOL_SUB = "%s · dueño %s · equipada ×%d · %s", BUTTONS_HEAD = "GOY Diagnostics · botones", TOOLS_HEAD = "GOY Diagnostics · %s",
+    BUTTONS_TITLE = "Botones", VIS_SHORT = "vis", HID_SHORT = "ocul", YES_UP = "SÍ", NO_UP = "NO",
+}
+STR.PERF = {
+    FPS = "FPS %.0f", FRAME = "frame %s · máx %s", GRAPH = "  (últimos %d s · cliente)", NO_GRAPH = "gráfica desactivada en este modo",
+    PING = "Ping %s", PING_SRC = "%s · aproximado", PING_NA = "API no disponible en este juego/ejecutor",
+    MEM = "Memoria %s", MEM_SUB = "scripts %s · montón Lua de este script %s",
+    NET = "Red ↓ %s  ↑ %s", NET_SUB = "Física %s · instancias %s",
+    SERVER = "Servidor", SERVER_NONE = "sin datos (requiere tu script de Studio)",
+    ERR = "Errores %d", WARN = "Advertencias %d", CONSOLE_SUB = "Consola del cliente (LogService). Toca para verlos en LOGS",
+    OBJECTS = "Objetos: %d remotos · %d herramientas · %d botones", OBJECTS_SUB = "Registros %d · %.1f/s · spam no guardado %d",
+    MONITOR = "Monitor: %d conexiones · cola %d (pico %d)", MONITOR_SUB = "render %.2f ms · %.1f act./s · %d instancias por lotes (%.1f ms/frame) · modo %s",
+    INTERNAL = "Errores internos del monitor: %d", INTERNAL_NONE = "Ninguno · toca para ver el historial con traceback",
+    INFO = "ⓘ Qué es aproximado y qué necesita Studio", INFO_SUB = "Toca para ver cómo se mide cada valor",
+    ERR_ROW = "#%d  [%s]  hace %.0f s",
+    T_HEAD = "GOY Diagnostics · rendimiento · %s", T_FPS = "FPS: %s · frame medio %s · máx %s", T_PHYS = "Física: %s", T_PING = "Ping: %s%s",
+    T_NET = "Red: recibe %s · envía %s", T_MEM = "Memoria cliente: %s · scripts %s · montón Lua %s", T_INST = "Instancias (Stats): %s",
+    T_SERVER = "Servidor: %s", T_CONSOLE = "Consola: %d errores · %d advertencias",
+    T_MONITOR = "Monitor: %d conexiones · render %.2f ms · %.1f actualizaciones/s · modo %s", T_LOGS = "Registros: %d · %.1f/s · errores internos %d",
+}
 
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
 if type(ENV.GOY_DIAG) == "table" and type(ENV.GOY_DIAG.destroy) == "function" then
     pcall(ENV.GOY_DIAG.destroy)
 end
 
-local G = {alive = true, conns = {}, internalErrors = 0, lastInternalError = "", errors = {}, VERSION = "1.1"}
+local G = {alive = true, conns = {}, internalErrors = 0, lastInternalError = "", errors = {}, VERSION = CONFIG.VERSION}
 ENV.GOY_DIAG = G
 
 local function svc(name)
@@ -55,16 +351,14 @@ local S = {
     Players = svc("Players"), RunService = svc("RunService"), UIS = svc("UserInputService"),
     Stats = svc("Stats"), LogService = svc("LogService"), CoreGui = svc("CoreGui"),
     HttpService = svc("HttpService"), CollectionService = svc("CollectionService"),
+    ReplicatedStorage = svc("ReplicatedStorage"),
 }
 local LP = S.Players and S.Players.LocalPlayer
 if not LP then warn("[GOY DIAG] Sin LocalPlayer: este script es de cliente.") return end
 
--- Contenedores que se exploran (solo los que existan y sean accesibles).
-local WATCH_NAMES = {"Workspace", "ReplicatedStorage", "ReplicatedFirst", "Players", "Lighting",
-    "StarterGui", "StarterPack", "StarterPlayer", "SoundService", "Teams", "Chat", "TextChatService"}
-
----------------------------------------------------------------- CAPACIDADES
--- Se comprueba cada función del ejecutor ANTES de usarla.
+-------------------------------------------------------------------------------
+-- 2. CAP — funciones del ejecutor (se comprueban ANTES de usarlas)
+-------------------------------------------------------------------------------
 local CAP = {}
 do
     local function fn(name)
@@ -81,10 +375,10 @@ do
     CAP.writefile = fn("writefile")
     CAP.readfile = fn("readfile")
     CAP.isfile = fn("isfile")
-    CAP.queue_on_teleport = fn("queue_on_teleport") or fn("queueonteleport")
     CAP.makefolder = fn("makefolder")
     CAP.isfolder = fn("isfolder")
     CAP.gethui = fn("gethui")
+    CAP.queue_on_teleport = fn("queue_on_teleport") or fn("queueonteleport")
     CAP.identifyexecutor = fn("identifyexecutor") or fn("getexecutorname")
     CAP.executor = "desconocido"
     if CAP.identifyexecutor then
@@ -95,16 +389,17 @@ do
     pcall(function() CAP.touch = S.UIS.TouchEnabled end)
 end
 
----------------------------------------------------------------- UTILIDADES
+-------------------------------------------------------------------------------
+-- 3. UTIL
+-------------------------------------------------------------------------------
 local U = {}
 local unpackf = table.unpack or unpack
 
--- Historial de errores internos (máx. 30) con traceback.
 function U.err(where, err)
     G.internalErrors = G.internalErrors + 1
     G.lastInternalError = tostring(err)
     table.insert(G.errors, 1, {t = os.clock(), where = where or "?", msg = tostring(err)})
-    if #G.errors > 30 then table.remove(G.errors) end
+    if #G.errors > CONFIG.MAX_ERRORS then table.remove(G.errors) end
     if G.onInternalError then pcall(G.onInternalError, where, err) end
 end
 
@@ -153,9 +448,7 @@ function U.path(inst)
     return "?"
 end
 
-function U.clock() return os.clock() end
-
--- Roblox solo garantiza os.date("*t"), así que se arma la hora a mano.
+-- Roblox solo garantiza os.date("*t"): la hora se arma a mano.
 local function dateTable()
     local ok, t = pcall(function() return os.date("*t") end)
     if ok and type(t) == "table" then return t end
@@ -175,6 +468,12 @@ function U.fullDate()
     return string.format("%04d-%02d-%02d %02d:%02d:%02d", t.year, t.month, t.day, t.hour, t.min, t.sec)
 end
 
+function U.fileStamp()
+    local t = dateTable()
+    if not t then return tostring(math.floor(os.clock())) end
+    return string.format("%04d%02d%02d_%02d%02d%02d", t.year, t.month, t.day, t.hour, t.min, t.sec)
+end
+
 function U.esc(s)
     s = tostring(s or "")
     s = s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub("\"", "&quot;")
@@ -189,31 +488,41 @@ end
 
 function U.lower(s) return string.lower(tostring(s or "")) end
 
--- Serializador seguro: límite de profundidad, de elementos y de longitud;
--- detecta referencias circulares. Nunca llama metamétodos del juego sin pcall.
+function U.oneLine(s) return (tostring(s or ""):gsub("\n", "  ·  ")) end
+
+function U.match(q, ...)
+    if q == "" then return true end
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        if v and U.lower(v):find(q, 1, true) then return true end
+    end
+    return false
+end
+
+-- Serializador seguro: límites de profundidad/elementos/longitud y tablas circulares.
 function U.ser(v, depth, seen, budget)
     depth = depth or 0
     seen = seen or {}
     budget = budget or {n = 0}
     budget.n = budget.n + 1
-    if budget.n > 80 then return "…" end
+    if budget.n > CONFIG.SER_BUDGET then return "…" end
     local t = U.typeOf(v)
     if t == "string" then
-        return string.format("%q", U.trunc(v, 120))
+        return string.format("%q", U.trunc(v, CONFIG.SER_STR))
     elseif t == "number" or t == "boolean" or t == "nil" then
         return tostring(v)
     elseif t == "Instance" then
         local ok, cn = pcall(function() return v.ClassName end)
-        return (ok and cn or "Instance") .. "(" .. U.trunc(U.path(v), 90) .. ")"
+        return (ok and cn or "Instance") .. "(" .. U.trunc(U.path(v), CONFIG.SER_PATH) .. ")"
     elseif t == "table" then
         if seen[v] then return "<circular>" end
-        if depth >= 3 then return "{…}" end
+        if depth >= CONFIG.SER_DEPTH then return "{…}" end
         seen[v] = true
         local parts, count = {}, 0
         local ok = pcall(function()
             for k, val in next, v do
                 count = count + 1
-                if count > 12 then parts[#parts + 1] = "…"; break end
+                if count > CONFIG.SER_ITEMS then parts[#parts + 1] = "…"; break end
                 local key
                 if type(k) == "string" then key = U.trunc(k, 40) else key = "[" .. U.ser(k, depth + 1, seen, budget) .. "]" end
                 parts[#parts + 1] = key .. "=" .. U.ser(val, depth + 1, seen, budget)
@@ -224,76 +533,111 @@ function U.ser(v, depth, seen, budget)
         return "{" .. table.concat(parts, ", ") .. "}"
     elseif t == "function" then
         return "function"
-    else
-        local ok, s = pcall(tostring, v)
-        return t .. "(" .. U.trunc(ok and s or "?", 80) .. ")"
     end
+    local ok, s = pcall(tostring, v)
+    return t .. "(" .. U.trunc(ok and s or "?", 80) .. ")"
 end
 
--- Devuelve (texto de argumentos, lista de tipos, número de argumentos)
+-- (texto de argumentos, lista de tipos, número de argumentos)
 function U.args(...)
     local n = select("#", ...)
     local pack = {...}
     local parts, types = {}, {}
-    for i = 1, math.min(n, 10) do
+    for i = 1, math.min(n, CONFIG.ARGS_MAX) do
         local t = U.typeOf(pack[i])
         types[#types + 1] = t
         parts[#parts + 1] = i .. ": " .. t .. " = " .. U.ser(pack[i])
     end
-    if n > 10 then parts[#parts + 1] = "… +" .. (n - 10) .. " argumentos" end
-    if n == 0 then parts[1] = "(sin argumentos)" end
+    if n > CONFIG.ARGS_MAX then parts[#parts + 1] = string.format(STR.MORE_ARGS, n - CONFIG.ARGS_MAX) end
+    if n == 0 then parts[1] = STR.NO_ARGS end
     return table.concat(parts, "\n"), types, n
 end
 
 function U.copy(text)
-    if CAP.setclipboard then
-        local ok = pcall(CAP.setclipboard, text)
-        if ok then return true end
-    end
-    return false
+    if not CAP.setclipboard then return false end
+    return (pcall(CAP.setclipboard, text))
 end
 
 function U.export(name, text)
-    if not CAP.writefile then return false, "writefile no disponible en este ejecutor" end
-    local folder = "GOY_Diag"
+    if not CAP.writefile then return false, STR.NO_WRITEFILE end
     if CAP.makefolder then
         pcall(function()
-            if not (CAP.isfolder and CAP.isfolder(folder)) then CAP.makefolder(folder) end
+            if not (CAP.isfolder and CAP.isfolder(CONFIG.FOLDER)) then CAP.makefolder(CONFIG.FOLDER) end
         end)
     end
-    local file = folder .. "/" .. name
+    local file = CONFIG.FOLDER .. "/" .. name
     local ok, err = pcall(CAP.writefile, file, text)
     if ok then return true, file end
-    -- sin carpeta
     ok, err = pcall(CAP.writefile, name, text)
     if ok then return true, name end
     return false, tostring(err)
 end
 
----------------------------------------------------------------- REGISTRO (LOG)
--- Búfer circular: nunca crece más de MAX entradas.
-local LOG = {max = 700, buf = {}, n = 0, total = 0, paused = false, droppedPaused = 0,
-    suppressed = 0, perCat = {}, version = 0}
-local CATS = {"Todas", "Remote", "Bindable", "Tool", "Instancia", "Cambio", "Valor", "Botón", "Consola", "Servidor", "Sistema"}
+-- Exporta una lista de tablas planas a JSON (si hay HttpService) o devuelve nil.
+function U.json(v)
+    if not S.HttpService then return nil end
+    local ok, s = pcall(function() return S.HttpService:JSONEncode(v) end)
+    return ok and s or nil
+end
 
-function LOG.add(cat, name, dir, args, types, extra)
+-- 3.1 CFG — configuración persistente (GOY_Diag/config.json, si hay readfile/writefile)
+local CFG = {data = {}, dirty = false, lastFlush = 0}
+function CFG.load()
+    if not (CAP.readfile and S.HttpService) then return end
+    pcall(function()
+        local file = CONFIG.FOLDER .. "/" .. CONFIG.CFG_FILE
+        if CAP.isfile and not CAP.isfile(file) then return end
+        local t = S.HttpService:JSONDecode(CAP.readfile(file))
+        if type(t) == "table" then CFG.data = t end
+    end)
+end
+function CFG.get(k, default)
+    local v = CFG.data[k]
+    if v == nil then return default end
+    return v
+end
+function CFG.set(k, v)
+    if CFG.data[k] ~= v then CFG.data[k] = v; CFG.dirty = true end
+end
+function CFG.flush(force)
+    if not CFG.dirty or not CAP.writefile then return end
+    if not force and os.clock() - CFG.lastFlush < CONFIG.CFG_FLUSH_SEC then return end
+    local raw = U.json(CFG.data)
+    if not raw then return end
+    CFG.dirty, CFG.lastFlush = false, os.clock()
+    U.export(CONFIG.CFG_FILE, raw)
+end
+CFG.load()
+
+-------------------------------------------------------------------------------
+-- 4. LOG — búfer circular + limitador por fuente con aviso temporizado
+-------------------------------------------------------------------------------
+local LOG = {max = CONFIG.LOG_MAX, buf = {}, n = 0, total = 0, paused = false, droppedPaused = 0,
+    suppressed = 0, perCat = {}, version = 0, listeners = {}}
+local CATS = STR.CATS
+
+-- Campos opcionales en `meta`: alert, kind, player, userId, remote (feed del servidor).
+function LOG.add(cat, name, dir, args, types, extra, meta)
     if LOG.paused then LOG.droppedPaused = LOG.droppedPaused + 1 return end
     LOG.total = LOG.total + 1
     LOG.perCat[cat] = (LOG.perCat[cat] or 0) + 1
-    local e = {id = LOG.total, t = U.stamp(), cat = cat, name = tostring(name or "?"), dir = dir or "",
-        args = args or "", types = types and table.concat(types, ", ") or "", extra = extra or ""}
-    local idx = ((LOG.total - 1) % LOG.max) + 1
-    LOG.buf[idx] = e
+    local e = {id = LOG.total, t = U.stamp(), clock = os.clock(), cat = cat, name = tostring(name or "?"), dir = dir or "",
+        args = args or "", types = type(types) == "table" and table.concat(types, ", ") or (types or ""), extra = extra or ""}
+    if meta then
+        e.alert, e.kind, e.player, e.userId, e.remote = meta.alert, meta.kind, meta.player, meta.userId, meta.remote
+    end
+    LOG.buf[((LOG.total - 1) % LOG.max) + 1] = e
     if LOG.n < LOG.max then LOG.n = LOG.n + 1 end
     LOG.version = LOG.version + 1
+    for _, fn in ipairs(LOG.listeners) do U.try("oyente de registro", fn, e) end
     if G.onLog then G.onLog(e) end
+    return e
 end
 
--- Recorre del más nuevo al más viejo.
+-- Del más nuevo al más viejo; fn devuelve false para parar.
 function LOG.iter(fn)
     for k = 0, LOG.n - 1 do
-        local id = LOG.total - k
-        local e = LOG.buf[((id - 1) % LOG.max) + 1]
+        local e = LOG.buf[((LOG.total - k - 1) % LOG.max) + 1]
         if e and fn(e) == false then return end
     end
 end
@@ -307,245 +651,242 @@ end
 function LOG.format(e)
     local s = "[" .. e.t .. "] [" .. e.cat .. "] " .. e.name
     if e.dir ~= "" then s = s .. "  (" .. e.dir .. ")" end
+    if e.player then s = s .. "\n  jugador: " .. tostring(e.player) .. (e.userId and (" (UserId " .. tostring(e.userId) .. ")") or "") end
+    if e.remote then s = s .. "\n  remoto: " .. tostring(e.remote) end
     if e.types ~= "" then s = s .. "\n  tipos: " .. e.types end
     if e.args ~= "" then s = s .. "\n  " .. e.args:gsub("\n", "\n  ") end
     if e.extra ~= "" then s = s .. "\n  " .. e.extra end
     return s
 end
 
--- Limitador por fuente: máximo 12 registros/s por objeto; el resto solo se cuenta.
-function U.rateOk(entry, name)
+function LOG.toRecord(e)
+    return {t = e.t, cat = e.cat, name = e.name, dir = e.dir, kind = e.kind, player = e.player, userId = e.userId,
+        remote = e.remote, types = e.types, args = e.args, extra = e.extra, alert = e.alert or false}
+end
+
+-- Limitador: `limit` registros por ventana por fuente; el exceso se cuenta y se
+-- avisa al cerrar la ventana, aunque no llegue otro evento (RATE.flush).
+local RATE = {active = setmetatable({}, {__mode = "k"})}
+local function emitSuppressed(entry)
+    if (entry.winSupp or 0) <= 0 then return end
+    LOG.add("Sistema", string.format(STR.LIMIT_NAME, tostring(entry.rateName or entry.name or "fuente")), "", "", nil,
+        string.format(STR.LIMIT_MSG, entry.winSupp, CONFIG.RATE_WINDOW), {alert = true, kind = "Spam"})
+    entry.winSupp = 0
+end
+function RATE.ok(entry, name, limit)
     local now = os.clock()
-    if not entry.winStart or now - entry.winStart >= 1 then
-        if entry.winSupp and entry.winSupp > 0 then
-            LOG.add("Sistema", "Límite: " .. tostring(name or entry.name or entry.rateName or "fuente"), "", "", nil,
-                entry.winSupp .. " eventos más en 1 s no se guardaron en el registro (spam), sí se contaron")
-        end
+    if name then entry.rateName = name end
+    if not entry.winStart or now - entry.winStart >= CONFIG.RATE_WINDOW then
+        emitSuppressed(entry)
         entry.winStart, entry.winCount, entry.winSupp = now, 0, 0
     end
     entry.winCount = entry.winCount + 1
-    if entry.winCount > 12 then
+    if entry.winCount > (limit or CONFIG.RATE_PER_SOURCE) then
         entry.winSupp = entry.winSupp + 1
         LOG.suppressed = LOG.suppressed + 1
+        RATE.active[entry] = true
         return false
     end
     return true
 end
+function RATE.flush()
+    local now = os.clock()
+    for entry in pairs(RATE.active) do
+        if now - (entry.winStart or 0) >= CONFIG.RATE_WINDOW then
+            emitSuppressed(entry)
+            RATE.active[entry] = nil
+        end
+    end
+end
 
----------------------------------------------------------------- REGISTROS DE OBJETOS
+-------------------------------------------------------------------------------
+-- 5. REG — objetos detectados (remotos, herramientas, botones, valores),
+--    escaneo por lotes, atributos, vigilancia y consola
+-------------------------------------------------------------------------------
 local REG = {
     remotes = {}, remoteByInst = setmetatable({}, {__mode = "k"}), remoteVersion = 0,
     tools = {}, toolByInst = setmetatable({}, {__mode = "k"}), toolVersion = 0,
     buttons = {}, buttonByInst = setmetatable({}, {__mode = "k"}), buttonVersion = 0,
+    values = 0, valueByInst = setmetatable({}, {__mode = "k"}),
     containers = {}, watched = {}, scanDone = false, scanned = 0,
-    values = 0, valueByInst = setmetatable({}, {__mode = "k"}), MAX_VALUES = 250,
-    queue = {}, qHead = 1, qTail = 0, qMax = 0, qBudgetMs = 1.5, qProcessed = 0, instAdded = 0, instRemoved = 0, logWorkspaceInstances = false,
+    queue = {}, qHead = 1, qTail = 0, qMax = 0, qProcessed = 0,
+    instAdded = 0, instRemoved = 0, logWorkspaceInstances = false,
+    specials = {},   -- nombre de remoto → manejador propio (lo llena FEED)
+    guiRoot = nil,   -- nuestra GUI (se ignora)
 }
 local REMOTE_CLASSES = {RemoteEvent = true, UnreliableRemoteEvent = true, RemoteFunction = true,
     BindableEvent = true, BindableFunction = true}
-local GUI_ROOT -- se asigna al crear la interfaz (para ignorar nuestra propia GUI)
+local REMOTE_DIR = {RemoteEvent = STR.DIR_RE, UnreliableRemoteEvent = STR.DIR_RE, BindableEvent = STR.DIR_BE,
+    RemoteFunction = STR.DIR_RF, BindableFunction = STR.DIR_BF}
 
-local function isOwnGui(inst)
-    if not GUI_ROOT then return false end
-    local ok, r = pcall(function() return inst == GUI_ROOT or inst:IsDescendantOf(GUI_ROOT) end)
+function REG.isOwnGui(inst)
+    local root = REG.guiRoot
+    if not root then return false end
+    local ok, r = pcall(function() return inst == root or inst:IsDescendantOf(root) end)
     return ok and r
 end
 
 local function locationOf(inst, rootName)
-    if rootName == "Players" then
-        local ok, r = pcall(function()
-            if inst:IsDescendantOf(LP) then
-                local pg = LP:FindFirstChildOfClass("PlayerGui")
-                if pg and inst:IsDescendantOf(pg) then return "Tu PlayerGui" end
-                local bp = LP:FindFirstChildOfClass("Backpack")
-                if bp and inst:IsDescendantOf(bp) then return "Tu Backpack" end
-                return "Tu jugador"
-            end
-            return "Players"
-        end)
-        return ok and r or "Players"
-    end
-    return rootName
+    if rootName ~= "Players" then return rootName end
+    local ok, r = pcall(function()
+        if not inst:IsDescendantOf(LP) then return "Players" end
+        local pg = LP:FindFirstChildOfClass("PlayerGui")
+        if pg and inst:IsDescendantOf(pg) then return STR.LOC.PLAYER_GUI end
+        local bp = LP:FindFirstChildOfClass("Backpack")
+        if bp and inst:IsDescendantOf(bp) then return STR.LOC.BACKPACK end
+        return STR.LOC.PLAYER
+    end)
+    return ok and r or "Players"
 end
 
-local function remoteDirection(class)
-    if class == "RemoteEvent" or class == "UnreliableRemoteEvent" then
-        return "Servidor → Cliente (OnClientEvent observado)"
-    elseif class == "BindableEvent" then
-        return "Local (BindableEvent.Event observado)"
-    elseif class == "RemoteFunction" then
-        return "No observable: OnClientInvoke solo se ve reemplazando el callback (no se hace)"
-    else
-        return "No observable: OnInvoke solo se ve reemplazando el callback (no se hace)"
-    end
+---------------- Remotos
+local function onRemoteSignal(e, cat, dir, ...)
+    e.count = e.count + 1
+    e.last = U.stamp()
+    REG.remoteVersion = REG.remoteVersion + 1
+    if not RATE.ok(e, e.name) then return end
+    local a, types = U.args(...)
+    e.lastArgs, e.lastTypes = a, table.concat(types, ", ")
+    LOG.add(cat, e.name, dir, a, types, e.path, {remote = e.path})
 end
 
-local function addRemote(inst, rootName, class)
+function REG.addRemote(inst, rootName, class)
     if REG.remoteByInst[inst] then return end
     local e = {inst = inst, name = inst.Name, class = class, path = U.path(inst), loc = locationOf(inst, rootName),
-        count = 0, last = nil, lastArgs = "", lastTypes = "", observable = false, removed = false,
-        addedAt = U.stamp(), dir = remoteDirection(class)}
+        count = 0, last = nil, lastArgs = "", lastTypes = "", observable = false, addedAt = U.stamp(), dir = REMOTE_DIR[class]}
+    local special = REG.specials[e.name]
     if class == "RemoteEvent" or class == "UnreliableRemoteEvent" then
         e.observable = true
-        e.conn = U.conn(inst.OnClientEvent, function(...)
-            e.count = e.count + 1
-            e.last = U.stamp()
-            REG.remoteVersion = REG.remoteVersion + 1
-            if not U.rateOk(e) then return end
-            local a, types = U.args(...)
-            e.lastArgs, e.lastTypes = a, table.concat(types, ", ")
-            if e.name == "GOY_DiagFeed" then
-                -- Canal de tu script de Studio (solo existe en TU juego instrumentado).
-                LOG.add("Servidor", "Instrumentación", "Servidor (instrumentado)", a, types, e.path)
-            else
-                LOG.add("Remote", e.name, "Servidor → Cliente", a, types, e.path)
-            end
-        end)
+        if special then
+            e.conn = special(e, inst)
+        else
+            e.conn = U.conn(inst.OnClientEvent, function(...) onRemoteSignal(e, "Remote", STR.DIR.S2C, ...) end, "OnClientEvent")
+        end
     elseif class == "BindableEvent" then
         e.observable = true
-        e.conn = U.conn(inst.Event, function(...)
-            e.count = e.count + 1
-            e.last = U.stamp()
-            REG.remoteVersion = REG.remoteVersion + 1
-            if not U.rateOk(e) then return end
-            local a, types = U.args(...)
-            e.lastArgs, e.lastTypes = a, table.concat(types, ", ")
-            LOG.add("Bindable", e.name, "Local", a, types, e.path)
-        end)
+        e.conn = U.conn(inst.Event, function(...) onRemoteSignal(e, "Bindable", STR.DIR.LOCAL, ...) end, "BindableEvent")
     end
     e.nameConn = U.conn(inst:GetPropertyChangedSignal("Name"), function()
-        e.name = inst.Name
-        e.path = U.path(inst)
+        e.name, e.path = inst.Name, U.path(inst)
         REG.remoteVersion = REG.remoteVersion + 1
-    end)
+    end, "nombre remoto")
     REG.remoteByInst[inst] = e
     REG.remotes[#REG.remotes + 1] = e
     REG.remoteVersion = REG.remoteVersion + 1
-    if REG.scanDone then
-        LOG.add("Instancia", e.name, "", "", nil, "Nuevo " .. class .. " en " .. e.path)
+    if REG.scanDone then LOG.add("Instancia", e.name, "", "", nil, string.format(STR.MSG.NEW_REMOTE, class, e.path)) end
+end
+
+local function removeFrom(list, item)
+    for i = #list, 1, -1 do
+        if list[i] == item then table.remove(list, i) return end
     end
 end
 
-local function removeRemote(inst)
+function REG.removeRemote(inst)
     local e = REG.remoteByInst[inst]
     if not e then return end
     U.disc(e.conn); U.disc(e.nameConn)
-    e.removed = true
     REG.remoteByInst[inst] = nil
-    for i = #REG.remotes, 1, -1 do
-        if REG.remotes[i] == e then table.remove(REG.remotes, i) break end
-    end
+    removeFrom(REG.remotes, e)
     REG.remoteVersion = REG.remoteVersion + 1
-    LOG.add("Instancia", e.name, "", "", nil, e.class .. " eliminado: " .. e.path)
+    LOG.add("Instancia", e.name, "", "", nil, string.format(STR.MSG.REMOVED, e.class, e.path))
 end
 
+---------------- Herramientas
 local function toolOwner(tool)
-    local ok, r, st = pcall(function()
+    local ok, owner, state = pcall(function()
         local p = tool.Parent
-        if not p then return "—", "fuera" end
-        if p:IsA("Backpack") then
-            local pl = p.Parent
-            return (pl and pl.Name or "?"), "en Backpack"
-        end
+        if not p then return "—", STR.LOC.OUTSIDE end
+        if p:IsA("Backpack") then return (p.Parent and p.Parent.Name or "?"), STR.LOC.IN_BACKPACK end
         local pl = S.Players:GetPlayerFromCharacter(p)
-        if pl then return pl.Name, "equipada" end
-        return "—", "en " .. p.Name
+        if pl then return pl.Name, STR.TOOL_STATE_EQUIPPED end
+        return "—", string.format(STR.LOC.IN, p.Name)
     end)
-    if ok then return r, st end
+    if ok then return owner, state end
     return "?", "?"
 end
 
-local function addTool(inst, rootName)
+function REG.addTool(inst, rootName)
     if REG.toolByInst[inst] then return end
-    local e = {inst = inst, name = inst.Name, class = inst.ClassName, loc = rootName, equips = 0, removed = false}
-    e.path = U.path(inst)
-    local function upd(reason)
-        local ok, owner, state = pcall(toolOwner, inst)
-        e.owner = ok and owner or "?"
-        e.state = ok and state or "?"
+    local e = {inst = inst, name = inst.Name, class = inst.ClassName, loc = rootName, equips = 0, path = U.path(inst)}
+    local function update(reason)
+        e.owner, e.state = toolOwner(inst)
         e.path = U.path(inst)
         REG.toolVersion = REG.toolVersion + 1
-        if reason then LOG.add("Tool", e.name, "", "", nil, reason .. " · dueño: " .. tostring(e.owner) .. " · " .. tostring(e.state)) end
+        if reason then LOG.add("Tool", e.name, "", "", nil, string.format(STR.MSG.TOOL_INFO, reason, tostring(e.owner), tostring(e.state))) end
     end
-    upd(REG.scanDone and "Herramienta apareció" or nil)
-    e.anc = U.conn(inst.AncestryChanged, function() if inst.Parent then upd("Cambió de lugar") end end)
+    update(REG.scanDone and STR.MSG.TOOL_APPEARED or nil)
+    e.anc = U.conn(inst.AncestryChanged, function() if inst.Parent then update(STR.MSG.TOOL_MOVED) end end, "tool lugar")
     pcall(function()
-        e.eq = U.conn(inst.Equipped, function() e.equips = e.equips + 1 upd("Equipada") end)
-        e.uneq = U.conn(inst.Unequipped, function() upd("Desequipada") end)
-        e.act = U.conn(inst.Activated, function() LOG.add("Tool", e.name, "", "", nil, "Activada (usada)") end)
+        e.eq = U.conn(inst.Equipped, function() e.equips = e.equips + 1; update(STR.MSG.TOOL_EQUIPPED) end, "tool equipada")
+        e.uneq = U.conn(inst.Unequipped, function() update(STR.MSG.TOOL_UNEQUIPPED) end, "tool desequipada")
+        e.act = U.conn(inst.Activated, function() LOG.add("Tool", e.name, "", "", nil, STR.MSG.TOOL_USED) end, "tool activada")
     end)
     REG.toolByInst[inst] = e
     REG.tools[#REG.tools + 1] = e
 end
 
-local function removeTool(inst)
+function REG.removeTool(inst)
     local e = REG.toolByInst[inst]
     if not e then return end
-    -- Si solo cambió de lugar (Backpack ↔ Character) sigue en el árbol: no se elimina.
+    -- Backpack ↔ Character dispara DescendantRemoving pero sigue en el juego.
     task.defer(function()
         local ok, still = pcall(function() return inst:IsDescendantOf(game) end)
         if ok and still then return end
         U.disc(e.anc); U.disc(e.eq); U.disc(e.uneq); U.disc(e.act)
         REG.toolByInst[inst] = nil
-        for i = #REG.tools, 1, -1 do
-            if REG.tools[i] == e then table.remove(REG.tools, i) break end
-        end
+        removeFrom(REG.tools, e)
         REG.toolVersion = REG.toolVersion + 1
-        LOG.add("Tool", e.name, "", "", nil, "Herramienta desapareció")
+        LOG.add("Tool", e.name, "", "", nil, STR.MSG.TOOL_GONE)
     end)
 end
 
--- Botones de interfaz (solo tu PlayerGui: es lo que el cliente puede ver).
-local function addButton(inst)
-    if REG.buttonByInst[inst] or isOwnGui(inst) then return end
-    local e = {inst = inst, name = inst.Name, class = inst.ClassName, clicks = 0, lastClick = nil}
-    e.path = U.path(inst)
+---------------- Botones (solo tu PlayerGui)
+function REG.addButton(inst)
+    if REG.buttonByInst[inst] or REG.isOwnGui(inst) then return end
+    local e = {inst = inst, name = inst.Name, class = inst.ClassName, clicks = 0, lastClick = nil, path = U.path(inst)}
     e.conn = U.conn(inst.Activated, function()
         e.clicks = e.clicks + 1
         e.lastClick = U.stamp()
         REG.buttonVersion = REG.buttonVersion + 1
         local txt = ""
         pcall(function() txt = inst.Text or "" end)
-        LOG.add("Botón", e.name, "Interfaz local", "", nil,
-            (txt ~= "" and ("texto: " .. U.trunc(txt, 60) .. " · ") or "") .. e.path ..
-            " · la función interna del botón no es visible")
-    end)
+        LOG.add("Botón", e.name, STR.DIR.GUI, "", nil,
+            (txt ~= "" and string.format(STR.MSG.BUTTON_TEXT, U.trunc(txt, 60)) or "") .. string.format(STR.MSG.BUTTON_NOTE, e.path))
+    end, "botón")
     REG.buttonByInst[inst] = e
     REG.buttons[#REG.buttons + 1] = e
     REG.buttonVersion = REG.buttonVersion + 1
 end
 
-local function removeButton(inst)
+function REG.removeButton(inst)
     local e = REG.buttonByInst[inst]
     if not e then return end
     U.disc(e.conn)
     REG.buttonByInst[inst] = nil
-    for i = #REG.buttons, 1, -1 do
-        if REG.buttons[i] == e then table.remove(REG.buttons, i) break end
-    end
+    removeFrom(REG.buttons, e)
     REG.buttonVersion = REG.buttonVersion + 1
 end
 
--- Valores de TU jugador (leaderstats, etc.): cambios visibles.
-local function addValue(inst)
-    if REG.valueByInst[inst] or REG.values >= REG.MAX_VALUES then return end
+---------------- Valores de tu jugador (sin duplicados; se descuentan al eliminarse)
+function REG.addValue(inst)
+    if REG.valueByInst[inst] or REG.values >= CONFIG.MAX_VALUES then return end
     local last = nil
     pcall(function() last = inst.Value end)
-    local entry = {name = inst.Name}
-    REG.valueByInst[inst] = entry
+    local e = {name = inst.Name}
+    REG.valueByInst[inst] = e
     REG.values = REG.values + 1
-    entry.conn = U.conn(inst.Changed, function()
-        if not U.rateOk(entry) then return end
+    e.conn = U.conn(inst.Changed, function()
+        if not RATE.ok(e, e.name) then return end
         local newv = nil
         pcall(function() newv = inst.Value end)
         local before = U.ser(last)
         last = newv
-        LOG.add("Valor", inst.Name, "Servidor → Cliente (replicado)", before .. "  →  " .. U.ser(newv),
-            {U.typeOf(newv)}, U.path(inst))
+        LOG.add("Valor", inst.Name, STR.DIR.REPLICATED_VALUE, before .. "  →  " .. U.ser(newv), {U.typeOf(newv)}, U.path(inst))
     end, "valor")
 end
 
-local function removeValue(inst)
+function REG.removeValue(inst)
     local e = REG.valueByInst[inst]
     if not e then return end
     U.disc(e.conn)
@@ -553,124 +894,134 @@ local function removeValue(inst)
     REG.values = math.max(0, REG.values - 1)
 end
 
-local function classify(inst, rootName, initial)
+---------------- Clasificación y escaneo
+local function isOwnValue(inst)
+    local ok, r = pcall(function()
+        return inst:IsA("ValueBase") and inst:IsDescendantOf(LP) and inst:FindFirstAncestorOfClass("PlayerGui") == nil
+    end)
+    return ok and r
+end
+
+function REG.classify(inst, rootName)
     local ok, cls = pcall(function() return inst.ClassName end)
     if not ok then return end
     if REMOTE_CLASSES[cls] then
-        addRemote(inst, rootName, cls)
+        REG.addRemote(inst, rootName, cls)
     elseif cls == "Tool" or cls == "HopperBin" then
-        addTool(inst, rootName)
+        REG.addTool(inst, rootName)
     elseif cls == "TextButton" or cls == "ImageButton" then
-        if rootName == "Players" then addButton(inst) end
-    elseif rootName == "Players" then
-        local okv, isv = pcall(function() return inst:IsA("ValueBase") and inst:IsDescendantOf(LP) end)
-        if okv and isv then
-            local inGui = false
-            pcall(function() inGui = inst:FindFirstAncestorOfClass("PlayerGui") ~= nil end)
-            if not inGui then addValue(inst) end
-        end
+        if rootName == "Players" then REG.addButton(inst) end
+    elseif rootName == "Players" and isOwnValue(inst) then
+        REG.addValue(inst)
     end
 end
 
-local function watchContainer(root, rootName)
+local function enqueue(inst, c)
+    local q, t = REG.queue, REG.qTail
+    q[t + 1], q[t + 2] = inst, c
+    REG.qTail = t + 2
+    local pending = (REG.qTail - REG.qHead + 1) / 2
+    if pending > REG.qMax then REG.qMax = pending end
+end
+
+function REG.pending()
+    return math.floor((REG.qTail - REG.qHead + 1) / 2)
+end
+
+local function onDescendantRemoving(c, inst)
+    c.count = math.max(0, c.count - 1)
+    c.removed = c.removed + 1
+    REG.instRemoved = REG.instRemoved + 1
+    if REG.remoteByInst[inst] then REG.removeRemote(inst) end
+    if REG.toolByInst[inst] then REG.removeTool(inst) end
+    if REG.buttonByInst[inst] then REG.removeButton(inst) end
+    if REG.valueByInst[inst] then REG.removeValue(inst) end
+end
+
+function REG.watchContainer(root, rootName)
     local c = {name = rootName, inst = root, count = 0, added = 0, removed = 0}
     REG.containers[#REG.containers + 1] = c
     REG.watched[root] = c
-    -- El evento solo encola (O(1)); el trabajo real se hace por lotes en Heartbeat.
+    -- El evento solo encola (O(1)); se procesa por lotes en Heartbeat.
     U.conn(root.DescendantAdded, function(inst)
         c.count = c.count + 1
         c.added = c.added + 1
         REG.instAdded = REG.instAdded + 1
-        local q, t = REG.queue, REG.qTail
-        q[t + 1], q[t + 2] = inst, c
-        REG.qTail = t + 2
-        local pending = (REG.qTail - REG.qHead + 1) / 2
-        if pending > REG.qMax then REG.qMax = pending end
+        enqueue(inst, c)
     end, "DescendantAdded " .. rootName)
-    U.conn(root.DescendantRemoving, function(inst)
-        c.count = math.max(0, c.count - 1)
-        c.removed = c.removed + 1
-        REG.instRemoved = REG.instRemoved + 1
-        if REG.remoteByInst[inst] then removeRemote(inst) end
-        if REG.toolByInst[inst] then removeTool(inst) end
-        if REG.buttonByInst[inst] then removeButton(inst) end
-        if REG.valueByInst[inst] then removeValue(inst) end
-    end, "DescendantRemoving " .. rootName)
+    U.conn(root.DescendantRemoving, function(inst) onDescendantRemoving(c, inst) end, "DescendantRemoving " .. rootName)
 end
 
 local function processAdded(inst, c)
     local okA, alive = pcall(function() return inst:IsDescendantOf(game) end)
-    if not (okA and alive) or isOwnGui(inst) then return end
-    classify(inst, c.name, false)
-    if REG.scanDone and (c.name ~= "Workspace" or REG.logWorkspaceInstances) and c.name ~= "Players" then
-        if U.rateOk(c, "instancias nuevas en " .. c.name) then
-            local okc, cls = pcall(function() return inst.ClassName end)
-            LOG.add("Instancia", inst.Name, "", "", nil, "Nueva " .. tostring(okc and cls or "?") .. " en " .. U.path(inst))
-        end
+    if not (okA and alive) or REG.isOwnGui(inst) then return end
+    REG.classify(inst, c.name)
+    local logIt = REG.scanDone and c.name ~= "Players" and (c.name ~= "Workspace" or REG.logWorkspaceInstances)
+    if logIt and RATE.ok(c, string.format(STR.MSG.INST_RATE, c.name)) then
+        local okc, cls = pcall(function() return inst.ClassName end)
+        LOG.add("Instancia", inst.Name, "", "", nil, string.format(STR.MSG.NEW_INST, tostring(okc and cls or "?"), U.path(inst)))
     end
 end
 
--- Procesa la cola con un presupuesto de tiempo por frame.
-do
-    local hb = S.RunService and S.RunService.Heartbeat
-    U.conn(hb, function()
-        local q = REG.queue
-        if REG.qHead > REG.qTail then return end
-        local deadline = os.clock() + REG.qBudgetMs / 1000
-        local n = 0
-        while REG.qHead <= REG.qTail do
-            local inst, c = q[REG.qHead], q[REG.qHead + 1]
-            q[REG.qHead], q[REG.qHead + 1] = nil, nil
-            REG.qHead = REG.qHead + 2
-            U.try("cola de instancias", processAdded, inst, c)
-            REG.qProcessed = REG.qProcessed + 1
-            n = n + 1
-            if n % 16 == 0 and os.clock() > deadline then break end
-        end
-        if REG.qHead > REG.qTail then REG.queue, REG.qHead, REG.qTail = {}, 1, 0 end
-    end, "cola Heartbeat")
+function REG.processQueue()
+    if REG.qHead > REG.qTail then return end
+    local q = REG.queue
+    local deadline = os.clock() + CONFIG.QUEUE_BUDGET_MS / 1000
+    local n = 0
+    while REG.qHead <= REG.qTail do
+        local inst, c = q[REG.qHead], q[REG.qHead + 1]
+        q[REG.qHead], q[REG.qHead + 1] = nil, nil
+        REG.qHead = REG.qHead + 2
+        U.try("cola de instancias", processAdded, inst, c)
+        REG.qProcessed = REG.qProcessed + 1
+        n = n + 1
+        if n % CONFIG.QUEUE_CHECK_EVERY == 0 and os.clock() > deadline then break end
+    end
+    if REG.qHead > REG.qTail then REG.queue, REG.qHead, REG.qTail = {}, 1, 0 end
 end
+U.conn(S.RunService and S.RunService.Heartbeat, REG.processQueue, "cola Heartbeat")
 
--- Escaneo inicial por partes (no congela el juego).
-local function initialScan()
+function REG.initialScan()
     local roots = {}
-    for _, name in ipairs(WATCH_NAMES) do
+    for _, name in ipairs(CONFIG.WATCH_NAMES) do
         local s = svc(name)
         if s then
             roots[#roots + 1] = {s, name}
-            watchContainer(s, name)
+            REG.watchContainer(s, name)
         end
     end
     for _, r in ipairs(roots) do
         local ok, list = pcall(function() return r[1]:GetDescendants() end)
         if ok and list then
-            local c = REG.watched[r[1]]
-            c.count = #list
+            REG.watched[r[1]].count = #list
             for i, inst in ipairs(list) do
                 if not G.alive then return end
-                classify(inst, r[2], true)
+                REG.classify(inst, r[2])
                 REG.scanned = REG.scanned + 1
-                if i % 400 == 0 then task.wait() end
+                if i % CONFIG.SCAN_YIELD_EVERY == 0 then task.wait() end
             end
         end
     end
     REG.scanDone = true
-    LOG.add("Sistema", "Escaneo inicial", "", "", nil,
-        REG.scanned .. " objetos revisados · " .. #REG.remotes .. " remotos/bindables · " ..
-        #REG.tools .. " herramientas · " .. #REG.buttons .. " botones")
+    LOG.add("Sistema", STR.MSG.SCAN, "", "", nil, string.format(STR.MSG.SCAN_DONE,
+        REG.scanned, #REG.remotes, #REG.tools, #REG.buttons))
 end
 
--- Atributos de tu jugador y personaje.
-local function watchAttributes(inst, label)
+---------------- Atributos de tu jugador y personaje
+function REG.watchAttributes(inst, label)
     U.conn(inst.AttributeChanged, function(attr)
         local v = nil
         pcall(function() v = inst:GetAttribute(attr) end)
-        LOG.add("Cambio", label .. "@" .. tostring(attr), "Replicado", U.ser(v), {U.typeOf(v)}, U.path(inst))
-    end)
+        LOG.add("Cambio", label .. "@" .. tostring(attr), STR.DIR.REPLICATED, U.ser(v), {U.typeOf(v)}, U.path(inst))
+    end, "atributo")
 end
 
--- Objetos vigilados manualmente desde el inspector (.Changed).
-local WATCH = {list = {}, max = 8}
+---------------- Vigilancia manual (.Changed) desde el inspector
+local WATCH = {list = {}}
+function WATCH.has(inst)
+    for _, w in ipairs(WATCH.list) do if w.inst == inst then return true end end
+    return false
+end
 function WATCH.toggle(inst)
     for i, w in ipairs(WATCH.list) do
         if w.inst == inst then
@@ -679,86 +1030,341 @@ function WATCH.toggle(inst)
             return false
         end
     end
-    if #WATCH.list >= WATCH.max then
-        local old = table.remove(WATCH.list, 1)
-        U.disc(old.conn)
-    end
+    if #WATCH.list >= CONFIG.MAX_WATCH then U.disc(table.remove(WATCH.list, 1).conn) end
     local w = {inst = inst, name = inst.Name}
     w.conn = U.conn(inst.Changed, function(prop)
-        if not U.rateOk(w) then return end
+        if not RATE.ok(w, w.name) then return end
         local v = nil
         pcall(function() v = inst[prop] end)
-        LOG.add("Cambio", w.name .. "." .. tostring(prop), "Observado", U.ser(v), {U.typeOf(v)}, U.path(inst))
-    end)
+        LOG.add("Cambio", w.name .. "." .. tostring(prop), STR.DIR.OBSERVED, U.ser(v), {U.typeOf(v)}, U.path(inst))
+    end, "vigilado")
     WATCH.list[#WATCH.list + 1] = w
     return true
 end
-function WATCH.has(inst)
-    for _, w in ipairs(WATCH.list) do if w.inst == inst then return true end end
-    return false
+
+---------------- Consola del cliente (LogService)
+local CONSOLE = {errors = 0, warnings = 0, infos = 0, rateName = "consola del cliente"}
+U.conn(S.LogService and S.LogService.MessageOut, function(msg, mtype)
+    local t = tostring(mtype)
+    local isError, isWarn = t:find("Error") ~= nil, t:find("Warning") ~= nil
+    if isError then CONSOLE.errors = CONSOLE.errors + 1
+    elseif isWarn then CONSOLE.warnings = CONSOLE.warnings + 1
+    else CONSOLE.infos = CONSOLE.infos + 1 return end
+    local m = tostring(msg)
+    if m:find("GOY DIAG", 1, true) then return end
+    if RATE.ok(CONSOLE) then
+        LOG.add("Consola", isError and STR.MSG.ERROR or STR.MSG.WARNING, STR.DIR.CONSOLE, U.trunc(m, 400), nil, "", {alert = isError})
+    end
+end, "consola")
+
+-------------------------------------------------------------------------------
+-- 6. FEED — datos de TU script de Studio (GOY_DiagFeed) y filtro de jugadores
+--    El filtro se pide al servidor por GOY_DiagMode (remoto propio de tu juego)
+--    y además se aplica en el cliente para que el cambio sea instantáneo.
+-------------------------------------------------------------------------------
+local FEED = {
+    remote = nil, modeRemote = nil, entry = nil,
+    received = 0, droppedByServer = 0, stats = nil,
+    filter = CFG.get("players", "all"),   -- "all" | "me" | UserId (número)
+    serverMode = nil, lastReq = -math.huge, reqScheduled = false,
+    names = {},                            -- UserId → nombre visto en el feed
+}
+if FEED.filter ~= "all" and FEED.filter ~= "me" and type(FEED.filter) ~= "number" then FEED.filter = "all" end
+
+local function shortName(path)
+    path = tostring(path or "")
+    return path:match("([^%.]+)$") or path
 end
 
----------------------------------------------------------------- CONSOLA (LogService)
-local CONSOLE = {errors = 0, warnings = 0, infos = 0, rateName = "consola"}
-do
-    if S.LogService then
-        U.conn(S.LogService.MessageOut, function(msg, mtype)
-            local t = tostring(mtype)
-            if t:find("Error") then
-                CONSOLE.errors = CONSOLE.errors + 1
-            elseif t:find("Warning") then
-                CONSOLE.warnings = CONSOLE.warnings + 1
-            else
-                CONSOLE.infos = CONSOLE.infos + 1
-                return
-            end
-            local m = tostring(msg)
-            if m:find("GOY DIAG", 1, true) then return end
-            if U.rateOk(CONSOLE, "consola del cliente") then
-                LOG.add("Consola", t:find("Error") and "Error" or "Advertencia", "Consola del cliente", U.trunc(m, 400), nil, "")
-            end
+-- Acepta el protocolo 2 (una tabla con campos) y el formato antiguo (posicional).
+function FEED.parse(...)
+    local first = ...
+    if type(first) == "table" and first.v then return first end
+    local kind, remote, player, args, types = ...
+    return {kind = tostring(kind or "?"), remote = remote, player = player, args = args, types = types,
+        msg = (kind == "ServerStats") and tostring(remote or "") or nil}
+end
+
+local FEED_KINDS = {
+    OnServerEvent = function(m)
+        return "Servidor", shortName(m.remote), string.format(STR.DIR.C2S, m.kind), false
+    end,
+    OnServerInvoke = function(m)
+        return "Servidor", shortName(m.remote), string.format(STR.DIR.C2S, m.kind), false
+    end,
+    Spam = function(m)
+        return "Servidor", string.format(STR.MSG.SPAM, shortName(m.remote)), STR.DIR.SERVER_NOTICE, true
+    end,
+    ServerStats = function(m)
+        FEED.stats = m.msg
+        return "Servidor", "ServerStats", STR.DIR.SERVER_STATS, false
+    end,
+    Dropped = function(m)
+        FEED.droppedByServer = FEED.droppedByServer + (tonumber(m.count) or 0)
+        return "Sistema", STR.MSG.FEED_DROPPED, "", true
+    end,
+    Mode = function(m)
+        FEED.serverMode = m.mode
+        return "Sistema", STR.MSG.SERVER_MODE, "", not m.ok
+    end,
+}
+
+function FEED.onMessage(e, ...)
+    e.count = e.count + 1
+    e.last = U.stamp()
+    FEED.received = FEED.received + 1
+    REG.remoteVersion = REG.remoteVersion + 1
+    local m = FEED.parse(...)
+    local handler = FEED_KINDS[m.kind]
+    local isControl = m.kind == "Mode" or m.kind == "Dropped"
+    if not isControl and not RATE.ok(e, STR.MSG.FEED_RATE, CONFIG.RATE_FEED) then return end
+    if m.userId then FEED.names[m.userId] = m.player end
+    local cat, name, dir, alert = "Servidor", m.kind, "", false
+    if handler then cat, name, dir, alert = handler(m) end
+    local extra = m.msg or (m.reason and tostring(m.reason)) or (m.count and string.format(STR.MSG.FEED_DROPPED_N, tostring(m.count))) or ""
+    LOG.add(cat, name, dir, m.args and tostring(m.args) or "", m.types and tostring(m.types) or "", extra,
+        {kind = m.kind, player = m.player, userId = m.userId, remote = m.remote, alert = alert})
+end
+
+REG.specials[CONFIG.FEED_REMOTE] = function(e, inst)
+    FEED.remote, FEED.entry = inst, e
+    return U.conn(inst.OnClientEvent, function(...) FEED.onMessage(e, ...) end, "feed del servidor")
+end
+REG.specials[CONFIG.MODE_REMOTE] = function(e, inst)
+    FEED.modeRemote = inst
+    task.defer(function() FEED.sendMode() end)
+    return nil -- solo se usa para pedir el modo; no se escucha
+end
+
+function FEED.label(v)
+    v = v or FEED.filter
+    if v == "all" then return STR.PLAYERS_ALL end
+    if v == "me" then return STR.PLAYERS_ME end
+    local name = FEED.names[v]
+    if not name then
+        pcall(function()
+            local p = S.Players:GetPlayerByUserId(v)
+            if p then name = p.Name end
         end)
     end
+    return string.format(STR.PLAYERS_ONE, name or tostring(v))
 end
 
----------------------------------------------------------------- RENDIMIENTO
-local PERF = {fps = 0, frames = 0, frameMax = 0, frameAvg = 0, accum = 0, win = os.clock(),
-    hist = {}, ping = nil, pingSrc = "", mem = nil, memScript = nil, luaHeap = nil, physFps = nil,
-    recv = nil, send = nil, instCount = nil, renderMs = 0, renders = 0, renderRate = 0,
-    renderWin = os.clock(), renderWinCount = 0, logRate = 0, logWinStart = os.clock(), logWinTotal = 0}
-
-do
-    local sig = S.RunService and (S.RunService.RenderStepped or S.RunService.Heartbeat)
-    U.conn(sig, function(dt)
-        PERF.frames = PERF.frames + 1
-        PERF.accum = PERF.accum + (dt or 0)
-        if (dt or 0) > PERF.frameMax then PERF.frameMax = dt end
-        local now = os.clock()
-        if now - PERF.win >= 1 then
-            PERF.fps = PERF.frames / (now - PERF.win)
-            PERF.frameAvg = PERF.frames > 0 and (PERF.accum / PERF.frames) or 0
-            PERF.lastFrameMax = PERF.frameMax
-            PERF.frames, PERF.accum, PERF.frameMax, PERF.win = 0, 0, 0, now
-            PERF.hist[#PERF.hist + 1] = math.floor(PERF.fps + 0.5)
-            if #PERF.hist > 30 then table.remove(PERF.hist, 1) end
+-- Pide el modo al servidor (máx. CONFIG.MODE_REQ_PER_SEC por segundo; el
+-- servidor también lo limita y valida).
+function FEED.sendMode()
+    if not FEED.modeRemote then return false end
+    local wait = (1 / CONFIG.MODE_REQ_PER_SEC) - (os.clock() - FEED.lastReq)
+    if wait > 0 then
+        if not FEED.reqScheduled then
+            FEED.reqScheduled = true
+            task.delay(wait, function()
+                FEED.reqScheduled = false
+                if G.alive then FEED.sendMode() end
+            end)
         end
-    end)
+        return true
+    end
+    FEED.lastReq = os.clock()
+    local ok = pcall(function() FEED.modeRemote:FireServer({mode = FEED.filter}) end)
+    return ok
 end
 
-function PERF.sample()
-    -- Cada métrica es opcional: si la API no existe o falla, queda "no disponible".
+function FEED.setFilter(v)
+    FEED.filter = v
+    CFG.set("players", v)
+    local sent = FEED.sendMode()
+    LOG.add("Sistema", STR.MSG.PLAYERS, "", "", nil, string.format(sent and STR.PLAYERS_SENT or STR.PLAYERS_LOCAL, FEED.label(v)))
+    FEED.version = (FEED.version or 0) + 1
+end
+
+-- Filtro instantáneo en el cliente. Los eventos locales (remotos que te llegan,
+-- tus valores, tus botones) son tuyos; las métricas del servidor pasan siempre.
+function FEED.passes(e)
+    local f = FEED.filter
+    if f == "all" then return true end
+    local uid = e.userId
+    if e.cat ~= "Servidor" then uid = LP.UserId
+    elseif uid == nil then return true end
+    if f == "me" then return uid == LP.UserId end
+    return uid == f
+end
+
+function FEED.cycle()
+    -- Todos → Solo yo → Elegir… (la elección abre una lista)
+    if FEED.filter == "all" then FEED.setFilter("me") return nil end
+    if FEED.filter == "me" then return "pick" end
+    FEED.setFilter("all")
+    return nil
+end
+
+-------------------------------------------------------------------------------
+-- 7. MODOS — definidos en CONFIG.MODES (una fila por modo)
+-------------------------------------------------------------------------------
+local MODE = {index = 1, def = CONFIG.MODES[1], version = 0, alertPending = false, lastAlert = nil,
+    capture = nil, lastCapture = nil, captureFinished = false}
+
+function MODE.find(id)
+    for i, m in ipairs(CONFIG.MODES) do if m.id == id then return i end end
+    return 1
+end
+
+function MODE.set(i, silentLog)
+    MODE.index = i
+    MODE.def = CONFIG.MODES[i]
+    MODE.alertPending = false
+    MODE.version = MODE.version + 1
+    CFG.set("mode", MODE.def.id)
+    if MODE.def.capture then MODE.startCapture() end
+    if not silentLog then LOG.add("Sistema", STR.MSG.MODE, "", "", nil, string.format(STR.MODE_SET, MODE.def.label)) end
+end
+
+function MODE.cycle()
+    MODE.set(MODE.index % #CONFIG.MODES + 1)
+end
+
+function MODE.passes(e)
+    local d = MODE.def
+    if d.cats and not d.cats[e.cat] then return false end
+    if d.alertsOnly and not e.alert then return false end
+    return true
+end
+
+function MODE.drawAllowed()
+    return not MODE.def.silent or MODE.alertPending
+end
+
+---------------- Captura
+function MODE.startCapture()
+    MODE.capture = {start = os.clock(), dur = CONFIG.CAPTURE_SECONDS, total = 0, byKey = {}, byPlayer = {}, bySecond = {}, byCat = {}}
+    MODE.captureFinished = false
+end
+
+function MODE.captureAdd(e)
+    local c = MODE.capture
+    if not c or e.cat == "Sistema" then return end
+    local sec = math.floor(e.clock - c.start) + 1
+    if sec > c.dur then return end
+    c.total = c.total + 1
+    local key = e.remote or (e.cat .. " · " .. e.name)
+    c.byKey[key] = (c.byKey[key] or 0) + 1
+    if e.player then c.byPlayer[e.player] = (c.byPlayer[e.player] or 0) + 1 end
+    c.bySecond[sec] = (c.bySecond[sec] or 0) + 1
+    c.byCat[e.cat] = (c.byCat[e.cat] or 0) + 1
+end
+
+local function topOf(map, n)
+    local list = {}
+    for k, v in pairs(map) do list[#list + 1] = {k = k, v = v} end
+    table.sort(list, function(a, b) if a.v ~= b.v then return a.v > b.v end return tostring(a.k) < tostring(b.k) end)
+    local out = {}
+    for i = 1, math.min(n, #list) do out[i] = list[i] end
+    return out
+end
+
+function MODE.captureSummary(c)
+    local peak, peakSec = 0, 0
+    for s, v in pairs(c.bySecond) do if v > peak then peak, peakSec = v, s end end
+    local t = {
+        string.format(STR.CAPTURE_TXT.HEAD, c.dur, U.fullDate()),
+        string.format(STR.CAPTURE_TXT.STATS, c.total, c.total / c.dur, peak, peakSec),
+        "", STR.CAPTURE_TXT.TOP,
+    }
+    for _, it in ipairs(topOf(c.byKey, 10)) do t[#t + 1] = string.format("  ×%-5d %s", it.v, it.k) end
+    t[#t + 1] = ""
+    t[#t + 1] = STR.CAPTURE_TXT.PLAYERS
+    local players = topOf(c.byPlayer, 10)
+    if #players == 0 then t[#t + 1] = STR.CAPTURE_TXT.NO_PLAYERS end
+    for _, it in ipairs(players) do t[#t + 1] = string.format("  ×%-5d %s", it.v, it.k) end
+    t[#t + 1] = ""
+    t[#t + 1] = STR.CAPTURE_TXT.CATS
+    for _, it in ipairs(topOf(c.byCat, 20)) do t[#t + 1] = string.format("  ×%-5d %s", it.v, it.k) end
+    t[#t + 1] = ""
+    t[#t + 1] = STR.CAPTURE_TXT.PER_SEC
+    local row = {}
+    for s = 1, c.dur do row[#row + 1] = tostring(c.bySecond[s] or 0) end
+    t[#t + 1] = "  " .. table.concat(row, " ")
+    return table.concat(t, "\n")
+end
+
+-- Se llama desde el bucle: cierra la captura al cumplirse el tiempo.
+function MODE.tickCapture()
+    local c = MODE.capture
+    if not c or os.clock() - c.start < c.dur then return end
+    MODE.capture = nil
+    MODE.lastCapture = {data = c, text = MODE.captureSummary(c)}
+    MODE.captureFinished = true
+    LOG.add("Sistema", STR.MSG.CAPTURE, "", "", nil, string.format(STR.CAPTURE_DONE, c.total, c.dur), {alert = false})
+end
+
+function MODE.captureLeft()
+    local c = MODE.capture
+    if not c then return nil end
+    return math.max(0, math.ceil(c.dur - (os.clock() - c.start)))
+end
+
+LOG.listeners[#LOG.listeners + 1] = function(e)
+    if e.alert then
+        MODE.lastAlert = e
+        if MODE.def.silent then MODE.alertPending = true end
+    end
+    if MODE.capture then MODE.captureAdd(e) end
+end
+
+MODE.set(MODE.find(CFG.get("mode", "normal")), true)
+
+-------------------------------------------------------------------------------
+-- 8. PERF — métricas del cliente (todas opcionales)
+-------------------------------------------------------------------------------
+local PERF = {fps = 0, frames = 0, frameMax = 0, frameAvg = 0, accum = 0, win = os.clock(), lastFrameMax = 0,
+    hist = {}, ping = nil, pingSrc = "", mem = nil, memScript = nil, luaHeap = nil, physFps = nil,
+    recv = nil, send = nil, instCount = nil, renderMs = 0, renderRate = 0, renderWin = os.clock(), renderWinCount = 0,
+    logRate = 0, logWinStart = os.clock(), logWinTotal = 0, lastSample = -math.huge, lastPingAlert = -math.huge, lastFpsAlert = -math.huge}
+
+local function onFrame(dt)
+    dt = dt or 0
+    PERF.frames = PERF.frames + 1
+    PERF.accum = PERF.accum + dt
+    if dt > PERF.frameMax then PERF.frameMax = dt end
+    local now = os.clock()
+    if now - PERF.win < 1 then return end
+    PERF.fps = PERF.frames / (now - PERF.win)
+    PERF.frameAvg = PERF.frames > 0 and (PERF.accum / PERF.frames) or 0
+    PERF.lastFrameMax = PERF.frameMax
+    PERF.frames, PERF.accum, PERF.frameMax, PERF.win = 0, 0, 0, now
+    PERF.hist[#PERF.hist + 1] = math.floor(PERF.fps + 0.5)
+    if #PERF.hist > CONFIG.PERF_HISTORY then table.remove(PERF.hist, 1) end
+end
+U.conn(S.RunService and (S.RunService.RenderStepped or S.RunService.Heartbeat), onFrame, "FPS")
+
+local function readPing()
     PERF.ping, PERF.pingSrc = nil, ""
     pcall(function()
         local p = LP:GetNetworkPing()
         if type(p) == "number" then PERF.ping = p * 1000; PERF.pingSrc = "Player:GetNetworkPing()" end
     end)
-    if not PERF.ping then
-        pcall(function()
-            local item = S.Stats.Network.ServerStatsItem["Data Ping"]
-            PERF.ping = item:GetValue()
-            PERF.pingSrc = "Stats Data Ping"
-        end)
+    if PERF.ping then return end
+    pcall(function()
+        PERF.ping = S.Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+        PERF.pingSrc = "Stats Data Ping"
+    end)
+end
+
+local function checkPerfAlerts(now)
+    if PERF.ping and PERF.ping > CONFIG.PING_ALERT_MS and now - PERF.lastPingAlert >= CONFIG.PERF_ALERT_COOLDOWN then
+        PERF.lastPingAlert = now
+        LOG.add("Sistema", STR.MSG.PING_HIGH, "", "", nil, string.format(STR.MSG.PING_HIGH_MSG, PERF.ping, CONFIG.PING_ALERT_MS), {alert = true, kind = "Ping"})
     end
+    if PERF.fps > 0 and PERF.fps < CONFIG.FPS_ALERT and now - PERF.lastFpsAlert >= CONFIG.PERF_ALERT_COOLDOWN then
+        PERF.lastFpsAlert = now
+        LOG.add("Sistema", STR.MSG.FPS_LOW, "", "", nil, string.format(STR.MSG.FPS_LOW_MSG, PERF.fps, CONFIG.FPS_ALERT), {alert = true, kind = "FPS"})
+    end
+end
+
+function PERF.sample()
+    local now = os.clock()
+    PERF.lastSample = now
+    readPing()
     pcall(function() PERF.mem = S.Stats:GetTotalMemoryUsageMb() end)
     pcall(function() PERF.memScript = S.Stats:GetMemoryUsageMbForTag(Enum.DeveloperMemoryTag.Script) end)
     pcall(function() PERF.luaHeap = collectgarbage("count") / 1024 end)
@@ -766,14 +1372,20 @@ function PERF.sample()
     pcall(function() PERF.recv = S.Stats.DataReceiveKbps end)
     pcall(function() PERF.send = S.Stats.DataSendKbps end)
     pcall(function() PERF.instCount = S.Stats.InstanceCount end)
-    local now = os.clock()
     if now - PERF.logWinStart >= 1 then
         PERF.logRate = math.max(0, LOG.total - PERF.logWinTotal) / (now - PERF.logWinStart)
         PERF.logWinTotal, PERF.logWinStart = LOG.total, now
     end
+    checkPerfAlerts(now)
 end
 
----------------------------------------------------------------- INTERFAZ
+function PERF.due(now)
+    return now - PERF.lastSample >= (MODE.def.sampleEvery or 1)
+end
+
+-------------------------------------------------------------------------------
+-- 9. UI — componentes (tema, panel, arrastre, lista virtual, detalle, selector)
+-------------------------------------------------------------------------------
 local TH = {
     bg = Color3.fromRGB(10, 12, 20), panel = Color3.fromRGB(16, 18, 30), card = Color3.fromRGB(22, 25, 42),
     card2 = Color3.fromRGB(28, 31, 52), line = Color3.fromRGB(45, 50, 80),
@@ -788,21 +1400,38 @@ local CLASS_HEX = {RemoteEvent = HEX.cyan, UnreliableRemoteEvent = HEX.blue, Rem
 local CAT_HEX = {Remote = HEX.cyan, Bindable = HEX.ok, Tool = HEX.warn, Instancia = HEX.dim, Cambio = HEX.pink,
     Valor = HEX.blue, ["Botón"] = HEX.violet, Consola = HEX.bad, Servidor = HEX.ok, Sistema = HEX.text}
 
-local UI = {tab = "MAIN", open = false, pages = {}, lists = {}, seen = {}, filters = {}, mode = {}}
+local UI = {tab = "MAIN", open = false, pages = {}, lists = {}, force = false, collapsed = false, controls = {}}
 
 local function mk(class, props, parent)
     local o = Instance.new(class)
-    for k, v in pairs(props or {}) do
-        pcall(function() o[k] = v end)
-    end
+    for k, v in pairs(props or {}) do pcall(function() o[k] = v end) end
     if parent then o.Parent = parent end
     return o
 end
 local function corner(o, r) return mk("UICorner", {CornerRadius = UDim.new(0, r or 8)}, o) end
 local function stroke(o, c, t, tr) return mk("UIStroke", {Color = c or TH.line, Thickness = t or 1, Transparency = tr or 0}, o) end
 local function pad(o, p) return mk("UIPadding", {PaddingLeft = UDim.new(0, p), PaddingRight = UDim.new(0, p), PaddingTop = UDim.new(0, p), PaddingBottom = UDim.new(0, p)}, o) end
+local function rich(hex, s) return '<font color="' .. hex .. '">' .. U.esc(s) .. '</font>' end
+local function hexColor(hex, fallback) return (Color3.fromHex and Color3.fromHex(hex)) or fallback or TH.cyan end
+local function isPress(input)
+    local t = input.UserInputType
+    return t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseButton1
+end
+local function isMove(input)
+    local t = input.UserInputType
+    return t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseMovement
+end
+local function onRelease(input, fn)
+    local c
+    c = input.Changed:Connect(function()
+        if input.UserInputState == Enum.UserInputState.End then
+            if c then c:Disconnect() end
+            fn()
+        end
+    end)
+end
 
--- Padre de la GUI: gethui (si existe) → CoreGui → PlayerGui.
+---------------- Padre de la GUI: gethui → CoreGui → PlayerGui
 local function guiParent()
     if CAP.gethui then
         local ok, h = pcall(CAP.gethui)
@@ -817,33 +1446,6 @@ local function guiParent()
     return LP:WaitForChild("PlayerGui")
 end
 
----------------- Configuración persistente (GOY_Diag/config.json, si hay readfile/writefile)
-local CFG = {data = {}, file = "GOY_Diag/config.json", dirty = false, lastFlush = 0}
-function CFG.load()
-    if not (CAP.readfile and S.HttpService) then return end
-    pcall(function()
-        if CAP.isfile and not CAP.isfile(CFG.file) then return end
-        local t = S.HttpService:JSONDecode(CAP.readfile(CFG.file))
-        if type(t) == "table" then CFG.data = t end
-    end)
-end
-function CFG.get(k, d)
-    local v = CFG.data[k]
-    if v == nil then return d end
-    return v
-end
-function CFG.set(k, v)
-    if CFG.data[k] ~= v then CFG.data[k] = v; CFG.dirty = true end
-end
-function CFG.flush(force)
-    if not CFG.dirty or not CAP.writefile or not S.HttpService then return end
-    if not force and os.clock() - CFG.lastFlush < 2 then return end
-    CFG.dirty, CFG.lastFlush = false, os.clock()
-    local ok, raw = pcall(function() return S.HttpService:JSONEncode(CFG.data) end)
-    if ok then U.export("config.json", raw) end
-end
-CFG.load()
-
 local parentGui = guiParent()
 pcall(function()
     local old = parentGui:FindFirstChild("GOY_Diagnostics")
@@ -851,9 +1453,8 @@ pcall(function()
 end)
 local screen = mk("ScreenGui", {Name = "GOY_Diagnostics", ResetOnSpawn = false, IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999})
--- Safe area: notch, isla dinámica y barra inferior del iPhone.
-pcall(function() screen.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets end)
-GUI_ROOT = screen
+pcall(function() screen.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets end) -- notch y barra inferior
+REG.guiRoot = screen
 screen.Parent = parentGui
 
 local vp = Vector2.new(844, 390)
@@ -863,9 +1464,13 @@ local function screenSize()
     if ok and s2 and s2.X and s2.X > 0 then return s2 end
     return vp
 end
-local MIN_W, MIN_H = 300, 240
-local PW = math.floor(math.clamp(CFG.get("w", vp.X * 0.92), MIN_W, math.max(MIN_W, vp.X - 8)))
-local PH = math.floor(math.clamp(CFG.get("h", vp.Y * 0.86), MIN_H, math.max(MIN_H, vp.Y - 8)))
+
+---------------- Geometría del panel (tamaño sin escala; la escala la aplica UIScale)
+local GEOM = {}
+GEOM.w = math.floor(math.clamp(CFG.get("w", vp.X * CONFIG.PANEL_VP_W), CONFIG.PANEL_MIN_W, math.max(CONFIG.PANEL_MIN_W, vp.X - CONFIG.SCREEN_PAD)))
+GEOM.h = math.floor(math.clamp(CFG.get("h", vp.Y * CONFIG.PANEL_VP_H), CONFIG.PANEL_MIN_H, math.max(CONFIG.PANEL_MIN_H, vp.Y - CONFIG.SCREEN_PAD)))
+GEOM.bodyTop = CONFIG.HEADER_H + CONFIG.GAP + CONFIG.TAB_BAR_H + CONFIG.GAP
+GEOM.bodyBottom = CONFIG.FOOTER_H + CONFIG.MARGIN
 
 -- Mantiene un marco dentro de la pantalla (posición en píxeles).
 local function clampFrame(f)
@@ -877,94 +1482,88 @@ local function clampFrame(f)
     end)
 end
 
----------------- Arrastre táctil (sin APIs de escritorio)
+---------------- Arrastre táctil
 local function draggable(handle, target, onTap, onEnd)
     local dragging, startPos, startUD, moved = false, nil, nil, false
     U.conn(handle.InputBegan, function(input)
-        local t = input.UserInputType
-        if t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseButton1 then
-            dragging, moved = true, false
-            startPos, startUD = input.Position, target.Position
-            local c
-            c = input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    if c then c:Disconnect() end
-                    clampFrame(target)
-                    if moved and onEnd then onEnd() end
-                end
-            end)
-        end
-    end)
+        if not isPress(input) then return end
+        dragging, moved = true, false
+        startPos, startUD = input.Position, target.Position
+        onRelease(input, function()
+            dragging = false
+            clampFrame(target)
+            if moved and onEnd then onEnd() end
+        end)
+    end, "arrastre inicio")
     U.conn(S.UIS.InputChanged, function(input)
-        if not dragging then return end
-        local t = input.UserInputType
-        if t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseMovement then
-            local d = input.Position - startPos
-            if math.abs(d.X) + math.abs(d.Y) > 8 then moved = true end
-            if moved then
-                target.Position = UDim2.new(startUD.X.Scale, startUD.X.Offset + d.X, startUD.Y.Scale, startUD.Y.Offset + d.Y)
-                clampFrame(target)
-            end
+        if not dragging or not isMove(input) then return end
+        local d = input.Position - startPos
+        if math.abs(d.X) + math.abs(d.Y) > CONFIG.DRAG_THRESHOLD then moved = true end
+        if moved then
+            target.Position = UDim2.new(startUD.X.Scale, startUD.X.Offset + d.X, startUD.Y.Scale, startUD.Y.Offset + d.Y)
+            clampFrame(target)
         end
-    end)
+    end, "arrastre")
     if onTap then
         U.conn(handle.Activated, function()
             if not moved then onTap() end
             moved = false
-        end)
+        end, "toque")
     end
 end
 
 ---------------- Botón flotante
-local fab = mk("TextButton", {Name = "Fab", Size = UDim2.fromOffset(60, 60),
-    Position = UDim2.fromOffset(CFG.get("fabX", vp.X - 76), CFG.get("fabY", math.floor(vp.Y * 0.3))),
-    BackgroundColor3 = TH.panel, Text = "GOY", TextColor3 = TH.text, Font = Enum.Font.GothamBlack, TextSize = 15,
+local fab = mk("TextButton", {Name = "Fab", Size = UDim2.fromOffset(CONFIG.FAB_SIZE, CONFIG.FAB_SIZE),
+    Position = UDim2.fromOffset(CFG.get("fabX", vp.X - CONFIG.FAB_SIZE - 16), CFG.get("fabY", math.floor(vp.Y * 0.3))),
+    BackgroundColor3 = TH.panel, Text = STR.FAB, TextColor3 = TH.text, Font = Enum.Font.GothamBlack, TextSize = 15,
     AutoButtonColor = false, ZIndex = 50}, screen)
-corner(fab, 30)
+corner(fab, CONFIG.FAB_SIZE / 2)
 stroke(fab, TH.cyan, 2)
 mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(0, 120, 160), Color3.fromRGB(90, 40, 170)), Rotation = 45}, fab)
 local fabDot = mk("Frame", {Size = UDim2.fromOffset(12, 12), Position = UDim2.new(1, -14, 0, 2), BackgroundColor3 = TH.ok, ZIndex = 51}, fab)
 corner(fabDot, 6)
 
 ---------------- Panel
-local panel = mk("Frame", {Name = "Panel", Size = UDim2.fromOffset(PW, PH),
-    Position = UDim2.fromOffset(CFG.get("x", math.floor((vp.X - PW) / 2)), CFG.get("y", math.floor((vp.Y - PH) / 2))),
+local panel = mk("Frame", {Name = "Panel", Size = UDim2.fromOffset(GEOM.w, GEOM.h),
+    Position = UDim2.fromOffset(CFG.get("x", math.floor((vp.X - GEOM.w) / 2)), CFG.get("y", math.floor((vp.Y - GEOM.h) / 2))),
     BackgroundColor3 = TH.bg, Visible = false, ZIndex = 10, Active = true}, screen)
 corner(panel, 14)
 stroke(panel, TH.cyan, 1.5, 0.2)
 mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 200, 255)), Rotation = 90}, panel)
 local uiScale = mk("UIScale", {Scale = CFG.get("scale", 1)}, panel)
+function UI.scale() return (uiScale.Scale and uiScale.Scale > 0) and uiScale.Scale or 1 end
 
-local header = mk("TextButton", {Size = UDim2.new(1, 0, 0, 52), BackgroundColor3 = TH.panel, Text = "", AutoButtonColor = false, ZIndex = 11}, panel)
+local header = mk("TextButton", {Size = UDim2.new(1, 0, 0, CONFIG.HEADER_H), BackgroundColor3 = TH.panel, Text = "", AutoButtonColor = false, ZIndex = 11}, panel)
 corner(header, 14)
 mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(0, 70, 95), Color3.fromRGB(55, 25, 105)), Rotation = 0}, header)
 local statusDot = mk("Frame", {Size = UDim2.fromOffset(10, 10), Position = UDim2.new(0, 12, 0.5, -5), BackgroundColor3 = TH.ok, ZIndex = 12}, header)
 corner(statusDot, 5)
-mk("TextLabel", {Size = UDim2.new(1, -140, 1, 0), Position = UDim2.fromOffset(30, 0), BackgroundTransparency = 1,
-    RichText = true, Text = '<font color="' .. HEX.cyan .. '">GOY</font> DIAGNOSTICS <font color="' .. HEX.dim .. '">· solo lectura</font>',
-    TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left,
-    TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 12}, header)
-local function headBtn(txt, x, color)
-    local b = mk("TextButton", {Size = UDim2.fromOffset(46, 44), Position = UDim2.new(1, x, 0.5, -22), BackgroundColor3 = TH.card2,
-        Text = txt, TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 16, ZIndex = 12, AutoButtonColor = true}, header)
+mk("TextLabel", {Size = UDim2.new(1, -(2 * CONFIG.TOUCH + 52), 1, 0), Position = UDim2.fromOffset(30, 0), BackgroundTransparency = 1,
+    RichText = true, Text = STR.TITLE, TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 14,
+    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 12}, header)
+local function headBtn(txt, slot, color)
+    local w = CONFIG.TOUCH + 2
+    local b = mk("TextButton", {Size = UDim2.fromOffset(w, CONFIG.TOUCH), Position = UDim2.new(1, -(w + 6) * slot, 0.5, -CONFIG.TOUCH / 2),
+        BackgroundColor3 = TH.card2, Text = txt, TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 16, ZIndex = 12}, header)
     corner(b, 8)
     return b
 end
-local closeBtn = headBtn("×", -52, TH.bad)
-local minBtn = headBtn("–", -104)
+local closeBtn = headBtn(STR.CLOSE, 1, TH.bad)
+local minBtn = headBtn(STR.MIN, 2)
 
-local tabBar = mk("ScrollingFrame", {Size = UDim2.new(1, -16, 0, 46), Position = UDim2.fromOffset(8, 56), BackgroundTransparency = 1,
+local tabBar = mk("ScrollingFrame", {Size = UDim2.new(1, -2 * CONFIG.MARGIN, 0, CONFIG.TAB_BAR_H),
+    Position = UDim2.fromOffset(CONFIG.MARGIN, CONFIG.HEADER_H + CONFIG.GAP), BackgroundTransparency = 1,
     ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X,
     CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 11}, panel)
 mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, tabBar)
 
-local body = mk("Frame", {Size = UDim2.new(1, -16, 1, -134), Position = UDim2.fromOffset(8, 106), BackgroundTransparency = 1,
-    ClipsDescendants = true, ZIndex = 11}, panel)
-local footer = mk("TextLabel", {Size = UDim2.new(1, -60, 0, 20), Position = UDim2.new(0, 10, 1, -24), BackgroundTransparency = 1,
-    Text = "", RichText = true, TextColor3 = TH.dim, Font = Enum.Font.Gotham, TextSize = 11,
+local body = mk("Frame", {Size = UDim2.new(1, -2 * CONFIG.MARGIN, 1, -(GEOM.bodyTop + GEOM.bodyBottom)), Position = UDim2.fromOffset(CONFIG.MARGIN, GEOM.bodyTop),
+    BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 11}, panel)
+local footer = mk("TextLabel", {Size = UDim2.new(1, -(CONFIG.TOUCH + 16), 0, CONFIG.FOOTER_H), Position = UDim2.new(0, 10, 1, -(CONFIG.FOOTER_H + 4)),
+    BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = TH.dim, Font = Enum.Font.Gotham, TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11}, panel)
 
+---------------- Aviso breve
 local toastLbl = mk("TextLabel", {Size = UDim2.new(1, -40, 0, 30), Position = UDim2.new(0, 20, 1, -64), BackgroundColor3 = TH.card2,
     TextColor3 = TH.text, Font = Enum.Font.GothamMedium, TextSize = 13, Visible = false, ZIndex = 40, TextWrapped = true}, panel)
 corner(toastLbl, 8)
@@ -975,41 +1574,30 @@ function UI.toast(msg)
     local my = toastSeq
     toastLbl.Text = msg
     toastLbl.Visible = true
-    task.delay(2.6, function() if my == toastSeq then toastLbl.Visible = false end end)
+    task.delay(CONFIG.TOAST_SEC, function() if my == toastSeq then toastLbl.Visible = false end end)
 end
 
-function UI.copyOrShow(title, text)
-    if U.copy(text) then
-        UI.toast("Copiado al portapapeles (" .. #text .. " caracteres)")
-    else
-        UI.toast("Este ejecutor no permite copiar: se muestra el texto para seleccionarlo")
-        UI.detail(title, text)
-    end
-end
-
----------------- Pestañas
-local TABS = {"MAIN", "REMOTES", "TOOLS", "BUTTONS", "LOGS", "PERFORMANCE"}
+---------------- Pestañas (marcos)
 local tabButtons = {}
-for i, name in ipairs(TABS) do
-    local b = mk("TextButton", {Size = UDim2.fromOffset(name == "PERFORMANCE" and 122 or 96, 44), BackgroundColor3 = TH.card,
-        Text = name, TextColor3 = TH.dim, Font = Enum.Font.GothamBold, TextSize = 12, LayoutOrder = i, ZIndex = 12, AutoButtonColor = false}, tabBar)
+for i, name in ipairs(STR.TABS) do
+    local b = mk("TextButton", {Size = UDim2.fromOffset(name == "PERFORMANCE" and CONFIG.TAB_W_WIDE or CONFIG.TAB_W, CONFIG.TOUCH),
+        BackgroundColor3 = TH.card, Text = name, TextColor3 = TH.dim, Font = Enum.Font.GothamBold, TextSize = 12, LayoutOrder = i,
+        ZIndex = 12, AutoButtonColor = false}, tabBar)
     corner(b, 9)
-    b:SetAttribute("tab", name)
     tabButtons[name] = b
-    local page = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 11}, body)
-    UI.pages[name] = page
+    UI.pages[name] = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 11}, body)
 end
 
----------------- Barra de herramientas y lista reutilizable
+---------------- Barra de herramientas
 function UI.toolbar(page)
-    local bar = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 0, 48), BackgroundTransparency = 1, ScrollBarThickness = 0,
+    local bar = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 0, CONFIG.TOOLBAR_H), BackgroundTransparency = 1, ScrollBarThickness = 0,
         ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 12}, page)
     mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
         VerticalAlignment = Enum.VerticalAlignment.Center}, bar)
     local tb = {bar = bar, n = 0}
     function tb.search(placeholder, w)
         tb.n = tb.n + 1
-        local box = mk("TextBox", {Size = UDim2.fromOffset(w or 150, 44), BackgroundColor3 = TH.card, Text = "", PlaceholderText = placeholder or "Buscar…",
+        local box = mk("TextBox", {Size = UDim2.fromOffset(w or 150, CONFIG.TOUCH), BackgroundColor3 = TH.card, Text = "", PlaceholderText = placeholder,
             PlaceholderColor3 = TH.dim, TextColor3 = TH.text, Font = Enum.Font.Gotham, TextSize = 13, ClearTextOnFocus = false,
             TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = tb.n, ZIndex = 12}, bar)
         corner(box, 8); stroke(box, TH.cyan, 1, 0.55); pad(box, 8)
@@ -1017,25 +1605,32 @@ function UI.toolbar(page)
     end
     function tb.button(text, fn, color, w)
         tb.n = tb.n + 1
-        local b = mk("TextButton", {Size = UDim2.fromOffset(w or 78, 44), BackgroundColor3 = TH.card2, Text = text,
+        local b = mk("TextButton", {Size = UDim2.fromOffset(w or 78, CONFIG.TOUCH), BackgroundColor3 = TH.card2, Text = text,
             TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 12, LayoutOrder = tb.n, ZIndex = 12}, bar)
         corner(b, 8); stroke(b, TH.violet, 1, 0.6)
-        if fn then U.conn(b.Activated, function() fn(b) end) end
+        if fn then U.conn(b.Activated, function() fn(b) end, "botón " .. text) end
         return b
     end
     return tb
 end
 
--- Lista VIRTUAL: solo existen las filas visibles (+3); se reubican al desplazar.
--- Los ítems pueden ser una tabla ya hecha o (n, función que crea el ítem i).
-local ROW_H, ROW_GAP = 56, 5
-function UI.list(page, top)
-    local sf = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 1, -(top or 52)), Position = UDim2.fromOffset(0, top or 52),
+-- Botones que aparecen en varias pestañas (Modo, Jugadores): se re-etiquetan juntos.
+function UI.addControl(kind, button) UI.controls[#UI.controls + 1] = {kind = kind, b = button} end
+function UI.refreshControls(labels)
+    for _, c in ipairs(UI.controls) do
+        local txt = labels[c.kind]
+        if txt and c.b.Text ~= txt then c.b.Text = txt end
+    end
+end
+
+---------------- Lista VIRTUAL: solo existen las filas visibles (+CONFIG.ROW_SPARE)
+function UI.list(parent, top)
+    local sf = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 1, -top), Position = UDim2.fromOffset(0, top),
         BackgroundColor3 = TH.panel, BackgroundTransparency = 0.15, ScrollBarThickness = 6, ScrollBarImageColor3 = TH.cyan,
         AutomaticCanvasSize = Enum.AutomaticSize.None, CanvasSize = UDim2.new(0, 0, 0, 0), ScrollingDirection = Enum.ScrollingDirection.Y,
-        ElasticBehavior = Enum.ElasticBehavior.Always, ZIndex = 11}, page)
+        ElasticBehavior = Enum.ElasticBehavior.Always, ZIndex = 11}, parent)
     corner(sf, 10)
-    local L = {sf = sf, rows = {}, n = 0, get = nil, cache = {}, items = {}}
+    local L = {sf = sf, rows = {}, n = 0, get = nil, cache = {}}
     function L.item(i)
         local it = L.cache[i]
         if it == nil and L.get then
@@ -1045,8 +1640,8 @@ function UI.list(page, top)
         return it
     end
     local function makeRow(k)
-        local row = mk("TextButton", {Size = UDim2.new(1, -14, 0, ROW_H - ROW_GAP), BackgroundColor3 = TH.card, Text = "", AutoButtonColor = true,
-            ZIndex = 12, Visible = false}, sf)
+        local row = mk("TextButton", {Size = UDim2.new(1, -14, 0, CONFIG.ROW_H - CONFIG.ROW_GAP), BackgroundColor3 = TH.card, Text = "",
+            AutoButtonColor = true, ZIndex = 12, Visible = false}, sf)
         corner(row, 8)
         local bar = mk("Frame", {Size = UDim2.new(0, 3, 1, -14), Position = UDim2.fromOffset(5, 7), BackgroundColor3 = TH.cyan, BorderSizePixel = 0, ZIndex = 13}, row)
         local t1 = mk("TextLabel", {Size = UDim2.new(1, -22, 0, 22), Position = UDim2.fromOffset(15, 5), BackgroundTransparency = 1, RichText = true,
@@ -1063,21 +1658,25 @@ function UI.list(page, top)
         L.rows[k] = r
         return r
     end
+    local function viewHeight()
+        -- AbsoluteWindowSize está en píxeles de pantalla (ya escalados): se pasa a unidades de la lista.
+        local h = nil
+        pcall(function() h = sf.AbsoluteWindowSize.Y end)
+        if not h or h <= 0 then h = GEOM.h end
+        return h / UI.scale()
+    end
     function L.draw()
-        local viewH = 400
-        pcall(function() viewH = sf.AbsoluteWindowSize.Y end)
-        if not viewH or viewH <= 0 then viewH = 400 end
         local scrollY = 0
         pcall(function() scrollY = sf.CanvasPosition.Y end)
-        local first = math.max(1, math.floor(scrollY / ROW_H) + 1)
-        local need = math.ceil(viewH / ROW_H) + 3
+        local first = math.max(1, math.floor(scrollY / CONFIG.ROW_H) + 1)
+        local need = math.ceil(viewHeight() / CONFIG.ROW_H) + CONFIG.ROW_SPARE
         for k = 1, need do
             local r = L.rows[k] or makeRow(k)
             local i = first + k - 1
             if i <= L.n then
                 local it = L.item(i)
                 r.idx = i
-                r.btn.Position = UDim2.fromOffset(6, (i - 1) * ROW_H + 6)
+                r.btn.Position = UDim2.fromOffset(6, (i - 1) * CONFIG.ROW_H + 6)
                 r.btn.Visible = true
                 if r.t1.Text ~= it.title then r.t1.Text = it.title end
                 local sub = it.sub or ""
@@ -1091,90 +1690,129 @@ function UI.list(page, top)
         for k = need + 1, #L.rows do L.rows[k].btn.Visible = false; L.rows[k].idx = 0 end
     end
     function L.setLazy(n, get)
+        local cap = MODE.def.maxRows
+        if cap and n > cap then n = cap end
         L.n, L.get, L.cache = n, get, {}
-        sf.CanvasSize = UDim2.new(0, 0, 0, n * ROW_H + 12)
+        sf.CanvasSize = UDim2.new(0, 0, 0, n * CONFIG.ROW_H + 12)
         L.draw()
     end
-    function L.set(items)
-        L.items = items
-        L.setLazy(#items, function(i) return items[i] end)
-    end
-    -- Copia de todos los ítems (para Copiar), sin depender de lo visible.
+    function L.set(items) L.setLazy(#items, function(i) return items[i] end) end
     function L.all()
         local out = {}
         for i = 1, L.n do out[#out + 1] = L.item(i) end
         return out
     end
-    U.conn(sf:GetPropertyChangedSignal("CanvasPosition"), function() L.draw() end, "scroll lista")
-    U.conn(sf:GetPropertyChangedSignal("AbsoluteWindowSize"), function() L.draw() end, "tamaño lista")
+    U.conn(sf:GetPropertyChangedSignal("CanvasPosition"), L.draw, "scroll lista")
+    U.conn(sf:GetPropertyChangedSignal("AbsoluteWindowSize"), L.draw, "tamaño lista")
     return L
 end
 
----------------- Detalle (texto largo, seleccionable, en bloques)
+---------------- Detalle (texto largo seleccionable, en bloques)
 local detail = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = TH.bg, Visible = false, ZIndex = 30, Active = true}, body)
 corner(detail, 10); stroke(detail, TH.violet, 1.2)
-local detailTitle = mk("TextLabel", {Size = UDim2.new(1, -262, 0, 44), Position = UDim2.fromOffset(10, 3), BackgroundTransparency = 1, RichText = true,
+local detailTitle = mk("TextLabel", {Size = UDim2.new(1, -262, 0, CONFIG.TOUCH), Position = UDim2.fromOffset(10, 3), BackgroundTransparency = 1, RichText = true,
     TextColor3 = TH.cyan, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left,
     TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 31}, detail)
-local function dBtn(txt, x, w, color)
-    local b = mk("TextButton", {Size = UDim2.fromOffset(w, 44), Position = UDim2.new(1, x, 0, 3), BackgroundColor3 = TH.card2, Text = txt,
+local function dBtn(txt, right, w, color)
+    local b = mk("TextButton", {Size = UDim2.fromOffset(w, CONFIG.TOUCH), Position = UDim2.new(1, -right, 0, 3), BackgroundColor3 = TH.card2, Text = txt,
         TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 31}, detail)
     corner(b, 8)
     return b
 end
-local dClose = dBtn("Cerrar", -76, 70, TH.bad)
-local dCopy = dBtn("Copiar", -152, 70, TH.cyan)
-local dExtra = dBtn("", -250, 92, TH.violet)
-local dScroll = mk("ScrollingFrame", {Size = UDim2.new(1, -12, 1, -56), Position = UDim2.fromOffset(6, 50), BackgroundColor3 = TH.panel,
+local dClose = dBtn(STR.CLOSE_BTN, 76, 70, TH.bad)
+local dCopy = dBtn(STR.COPY, 152, 70, TH.cyan)
+local dExtra = dBtn("", 250, 92, TH.violet)
+local dScroll = mk("ScrollingFrame", {Size = UDim2.new(1, -12, 1, -(CONFIG.TOUCH + 12)), Position = UDim2.fromOffset(6, CONFIG.TOUCH + 6), BackgroundColor3 = TH.panel,
     ScrollBarThickness = 5, ScrollBarImageColor3 = TH.violet, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(0, 0, 0, 0),
     ZIndex = 31}, detail)
 corner(dScroll, 8); pad(dScroll, 8)
 mk("UIListLayout", {Padding = UDim.new(0, 0), SortOrder = Enum.SortOrder.LayoutOrder}, dScroll)
-local dChunks, dText, dExtraFn = {}, "", nil
-local CHUNK = 2500
-function UI.detail(title, text, extraLabel, extraFn)
-    dText = tostring(text or "")
-    detailTitle.Text = U.esc(title or "Detalle")
-    dExtraFn = extraFn
-    dExtra.Visible = extraLabel ~= nil
-    dExtra.Text = extraLabel or ""
-    local shown = dText
-    if #shown > 60000 then shown = shown:sub(1, 60000) .. "\n… (recortado en pantalla; Copiar copia todo)" end
-    local idx = 0
-    local pos = 1
-    while pos <= #shown do
-        idx = idx + 1
-        local stop = math.min(#shown, pos + CHUNK - 1)
-        if stop < #shown then
-            local nl = shown:find("\n", stop, true)
+local DET = {chunks = {}, text = "", extraFn = nil}
+
+local function chunkText(s)
+    local parts, pos = {}, 1
+    while pos <= #s do
+        local stop = math.min(#s, pos + CONFIG.DETAIL_CHUNK - 1)
+        if stop < #s then
+            local nl = s:find("\n", stop, true)
             if nl and nl - stop < 400 then stop = nl end
         end
-        local part = shown:sub(pos, stop)
+        parts[#parts + 1] = s:sub(pos, stop)
         pos = stop + 1
-        local box = dChunks[idx]
+    end
+    return parts
+end
+
+function UI.detail(title, text, extraLabel, extraFn)
+    DET.text = tostring(text or "")
+    DET.extraFn = extraFn
+    detailTitle.Text = U.esc(title or STR.DETAIL)
+    dExtra.Visible = extraLabel ~= nil
+    dExtra.Text = extraLabel or ""
+    local shown = DET.text
+    if #shown > CONFIG.DETAIL_MAX then shown = shown:sub(1, CONFIG.DETAIL_MAX) .. STR.DETAIL_CUT end
+    local parts = chunkText(shown)
+    for idx, part in ipairs(parts) do
+        local box = DET.chunks[idx]
         if not box then
             box = mk("TextBox", {Size = UDim2.new(1, -6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
                 TextColor3 = TH.text, Font = Enum.Font.Code, TextSize = 12, TextWrapped = true, MultiLine = true, ClearTextOnFocus = false,
                 TextEditable = false, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
                 LayoutOrder = idx, ZIndex = 32}, dScroll)
-            dChunks[idx] = box
+            DET.chunks[idx] = box
         end
         box.Text = part
         box.Visible = true
     end
-    for i = idx + 1, #dChunks do dChunks[i].Visible = false; dChunks[i].Text = "" end
+    for i = #parts + 1, #DET.chunks do DET.chunks[i].Visible = false; DET.chunks[i].Text = "" end
     dScroll.CanvasPosition = Vector2.new(0, 0)
     detail.Visible = true
 end
-U.conn(dClose.Activated, function() detail.Visible = false end)
-U.conn(dCopy.Activated, function() UI.copyOrShow("Copia", dText) end)
-U.conn(dExtra.Activated, function() if dExtraFn then dExtraFn() end end)
+U.conn(dClose.Activated, function() detail.Visible = false end, "cerrar detalle")
+U.conn(dCopy.Activated, function() UI.copyOrShow(STR.DETAIL, DET.text) end, "copiar detalle")
+U.conn(dExtra.Activated, function() if DET.extraFn then DET.extraFn() end end, "acción detalle")
 
----------------- Abrir / cerrar / cambiar pestaña
+function UI.copyOrShow(title, text)
+    if U.copy(text) then
+        UI.toast(string.format(STR.COPIED, #text))
+    else
+        UI.toast(STR.NO_CLIPBOARD)
+        UI.detail(title, text)
+    end
+end
+
+---------------- Selector (lista de opciones a pantalla completa del cuerpo)
+local picker = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = TH.bg, Visible = false, ZIndex = 34, Active = true}, body)
+corner(picker, 10); stroke(picker, TH.cyan, 1.2)
+local pickerTitle = mk("TextLabel", {Size = UDim2.new(1, -100, 0, CONFIG.TOUCH), Position = UDim2.fromOffset(10, 3), BackgroundTransparency = 1,
+    TextColor3 = TH.cyan, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35}, picker)
+local pickerClose = mk("TextButton", {Size = UDim2.fromOffset(70, CONFIG.TOUCH), Position = UDim2.new(1, -76, 0, 3), BackgroundColor3 = TH.card2,
+    Text = STR.CLOSE_BTN, TextColor3 = TH.bad, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 35}, picker)
+corner(pickerClose, 8)
+local pickerList = UI.list(picker, CONFIG.TOUCH + 8)
+pickerList.sf.ZIndex = 35
+U.conn(pickerClose.Activated, function() picker.Visible = false end, "cerrar selector")
+-- options = {{title=, sub=, onPick=fn}, ...}
+function UI.pick(title, options)
+    pickerTitle.Text = title
+    local items = {}
+    for i, o in ipairs(options) do
+        items[i] = {title = o.title, sub = o.sub, color = TH.cyan, onTap = function()
+            picker.Visible = false
+            o.onPick()
+            UI.force = true
+        end}
+    end
+    picker.Visible = true
+    pickerList.set(items)
+end
+
+---------------- Abrir / cerrar / pestañas
 function UI.setTab(name)
     UI.tab = name
     CFG.set("tab", name)
     detail.Visible = false
+    picker.Visible = false
     for n, p in pairs(UI.pages) do p.Visible = (n == name) end
     for n, b in pairs(tabButtons) do
         local on = (n == name)
@@ -1186,7 +1824,7 @@ function UI.setTab(name)
     UI.force = true
 end
 for name, b in pairs(tabButtons) do
-    U.conn(b.Activated, function() UI.setTab(name) end)
+    U.conn(b.Activated, function() UI.setTab(name) end, "pestaña " .. name)
 end
 
 function UI.toggle(state)
@@ -1195,207 +1833,237 @@ function UI.toggle(state)
     panel.Visible = state
     if state then UI.force = true end
 end
-local function savePos()
+
+local function saveGeometry()
     pcall(function()
         CFG.set("fabX", fab.Position.X.Offset); CFG.set("fabY", fab.Position.Y.Offset)
         CFG.set("x", panel.Position.X.Offset); CFG.set("y", panel.Position.Y.Offset)
-        CFG.set("w", panel.Size.X.Offset); CFG.set("h", panel.Size.Y.Offset)
+        CFG.set("w", GEOM.w); CFG.set("h", GEOM.h)
     end)
 end
-draggable(fab, fab, function() UI.toggle() end, savePos)
-draggable(header, panel, nil, savePos)
+draggable(fab, fab, function() UI.toggle() end, saveGeometry)
+draggable(header, panel, nil, saveGeometry)
+U.conn(closeBtn.Activated, function() UI.toggle(false) end, "cerrar panel")
 
----------------- Esquina para redimensionar
-local grip = mk("TextButton", {Size = UDim2.fromOffset(44, 44), Position = UDim2.new(1, -44, 1, -44), BackgroundTransparency = 1,
-    Text = "◢", TextColor3 = TH.cyan, TextTransparency = 0.3, Font = Enum.Font.GothamBold, TextSize = 18, ZIndex = 25,
-    TextXAlignment = Enum.TextXAlignment.Right, TextYAlignment = Enum.TextYAlignment.Bottom}, panel)
-do
-    local resizing, startPos, startSize = false, nil, nil
-    U.conn(grip.InputBegan, function(input)
-        local t = input.UserInputType
-        if t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseButton1 then
-            resizing, startPos, startSize = true, input.Position, panel.Size
-            local c
-            c = input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    resizing = false
-                    if c then c:Disconnect() end
-                    savePos()
-                end
-            end)
-        end
-    end, "resize")
-    U.conn(S.UIS.InputChanged, function(input)
-        if not resizing then return end
-        local t = input.UserInputType
-        if t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseMovement then
-            local d = input.Position - startPos
-            local ss, sc = screenSize(), uiScale.Scale
-            local maxW = (ss.X - panel.Position.X.Offset) / sc
-            local maxH = (ss.Y - panel.Position.Y.Offset) / sc
-            local w = math.clamp(startSize.X.Offset + d.X / sc, MIN_W, math.max(MIN_W, maxW))
-            local h = math.clamp(startSize.Y.Offset + d.Y / sc, MIN_H, math.max(MIN_H, maxH))
-            panel.Size = UDim2.fromOffset(math.floor(w), math.floor(h))
-            PW, PH = math.floor(w), math.floor(h)
-        end
-    end, "resize mover")
+---------------- Tamaño: minimizado, giro de pantalla y esquina de redimensionar
+local grip = mk("TextButton", {Size = UDim2.fromOffset(CONFIG.TOUCH, CONFIG.TOUCH), Position = UDim2.new(1, -CONFIG.TOUCH, 1, -CONFIG.TOUCH),
+    BackgroundTransparency = 1, Text = STR.GRIP, TextColor3 = TH.cyan, TextTransparency = 0.3, Font = Enum.Font.GothamBold, TextSize = 18,
+    ZIndex = 25, TextXAlignment = Enum.TextXAlignment.Right, TextYAlignment = Enum.TextYAlignment.Bottom}, panel)
+
+-- Ajusta GEOM a la pantalla actual y aplica el tamaño respetando "minimizado".
+function UI.applySize()
+    local ss, sc = screenSize(), UI.scale()
+    GEOM.w = math.floor(math.clamp(GEOM.w, CONFIG.PANEL_MIN_W, math.max(CONFIG.PANEL_MIN_W, ss.X / sc - CONFIG.SCREEN_PAD)))
+    GEOM.h = math.floor(math.clamp(GEOM.h, CONFIG.PANEL_MIN_H, math.max(CONFIG.PANEL_MIN_H, ss.Y / sc - CONFIG.SCREEN_PAD)))
+    local h = UI.collapsed and CONFIG.HEADER_H or GEOM.h
+    panel.Size = UDim2.fromOffset(GEOM.w, h)
+    tabBar.Visible, body.Visible, footer.Visible, grip.Visible = not UI.collapsed, not UI.collapsed, not UI.collapsed, not UI.collapsed
+    clampFrame(panel)
+    clampFrame(fab)
 end
 
----------------- Escala de la interfaz y orientación
-local SCALES = {0.85, 1, 1.15, 1.3}
+U.conn(minBtn.Activated, function()
+    UI.collapsed = not UI.collapsed
+    UI.applySize()
+end, "minimizar")
+
+do
+    local resizing, startPos, startW, startH = false, nil, 0, 0
+    U.conn(grip.InputBegan, function(input)
+        if not isPress(input) then return end
+        resizing, startPos, startW, startH = true, input.Position, GEOM.w, GEOM.h
+        onRelease(input, function()
+            resizing = false
+            saveGeometry()
+        end)
+    end, "redimensionar inicio")
+    U.conn(S.UIS.InputChanged, function(input)
+        if not resizing or not isMove(input) then return end
+        local d = input.Position - startPos
+        local ss, sc = screenSize(), UI.scale()
+        local maxW = (ss.X - panel.Position.X.Offset) / sc
+        local maxH = (ss.Y - panel.Position.Y.Offset) / sc
+        GEOM.w = math.floor(math.clamp(startW + d.X / sc, CONFIG.PANEL_MIN_W, math.max(CONFIG.PANEL_MIN_W, maxW)))
+        GEOM.h = math.floor(math.clamp(startH + d.Y / sc, CONFIG.PANEL_MIN_H, math.max(CONFIG.PANEL_MIN_H, maxH)))
+        panel.Size = UDim2.fromOffset(GEOM.w, GEOM.h)
+    end, "redimensionar")
+end
+
+function UI.scaleLabel(sc) return string.format(STR.BTN_SCALE, math.floor((sc or UI.scale()) * 100 + 0.5)) end
+
 function UI.cycleScale()
-    local cur, nextS = uiScale.Scale, SCALES[1]
-    for i, v in ipairs(SCALES) do if math.abs(v - cur) < 0.01 then nextS = SCALES[i % #SCALES + 1] end end
+    local cur, nextS = UI.scale(), CONFIG.SCALES[1]
+    for i, v in ipairs(CONFIG.SCALES) do
+        if math.abs(v - cur) < 0.01 then nextS = CONFIG.SCALES[i % #CONFIG.SCALES + 1] end
+    end
     uiScale.Scale = nextS
     CFG.set("scale", nextS)
-    clampFrame(panel)
+    UI.applySize()
+    for _, L in pairs(UI.lists) do pcall(L.draw) end
     return nextS
 end
-U.conn(screen:GetPropertyChangedSignal("AbsoluteSize"), function()
-    -- Giro vertical/horizontal: el panel cabe y queda dentro de la pantalla.
-    local ss, sc = screenSize(), uiScale.Scale
-    local w = math.clamp(PW, MIN_W, math.max(MIN_W, ss.X / sc - 8))
-    local h = math.clamp(PH, MIN_H, math.max(MIN_H, ss.Y / sc - 8))
-    panel.Size = UDim2.fromOffset(math.floor(w), math.floor(h))
-    clampFrame(panel); clampFrame(fab)
-end, "orientación")
-task.defer(function() clampFrame(panel); clampFrame(fab) end)
-U.conn(closeBtn.Activated, function() UI.toggle(false) end)
 
----------------------------------------------------------------- INSPECTOR DE OBJETOS
+U.conn(screen:GetPropertyChangedSignal("AbsoluteSize"), UI.applySize, "giro de pantalla")
+task.defer(UI.applySize)
+
+-------------------------------------------------------------------------------
+-- 10. PESTAÑAS
+-------------------------------------------------------------------------------
+local LIST_TOP = CONFIG.TOOLBAR_H + CONFIG.GAP
+
+---------------- Controles compartidos (MAIN y LOGS): Modo y Jugadores
+function UI.controlLabels()
+    local modeTxt = MODE.def.label
+    local left = MODE.captureLeft()
+    if left then modeTxt = modeTxt .. " " .. left .. "s" end
+    return {mode = string.format(STR.BTN_MODE, modeTxt), players = string.format(STR.BTN_PLAYERS, FEED.label())}
+end
+
+function UI.pickPlayer()
+    local opts = {
+        {title = STR.PLAYERS_ALL, sub = "", onPick = function() FEED.setFilter("all") end},
+        {title = STR.PLAYERS_ME, sub = "", onPick = function() FEED.setFilter("me") end},
+    }
+    local ok, players = pcall(function() return S.Players:GetPlayers() end)
+    for _, p in ipairs(ok and players or {}) do
+        local uid = p.UserId
+        opts[#opts + 1] = {title = U.esc(p.DisplayName ~= p.Name and (p.DisplayName .. " (@" .. p.Name .. ")") or p.Name),
+            sub = string.format(STR.PICK_SUB, uid, p == LP and STR.PICK_YOU or ""), onPick = function() FEED.setFilter(uid) end}
+    end
+    UI.pick(STR.PICK_TITLE, opts)
+end
+
+local function addSharedControls(tb)
+    local labels = UI.controlLabels()
+    UI.addControl("mode", tb.button(labels.mode, function()
+        MODE.cycle()
+        if MODE.def.capture then UI.toast(string.format(STR.CAPTURE_START, CONFIG.CAPTURE_SECONDS)) end
+        UI.refreshControls(UI.controlLabels())
+        UI.force = true
+    end, TH.warn, 150))
+    UI.addControl("players", tb.button(labels.players, function()
+        if FEED.cycle() == "pick" then UI.pickPlayer() end
+        UI.refreshControls(UI.controlLabels())
+        UI.force = true
+    end, TH.ok, 150))
+end
+
+---------------- Inspector de objetos
 local PROPS = {"Name", "ClassName", "Parent", "Archivable", "Enabled", "Disabled", "Visible", "Active", "Text", "Value",
     "Position", "Size", "Orientation", "Transparency", "Anchored", "CanCollide", "CanTouch", "Massless", "Material", "Color",
     "BrickColor", "Locked", "PrimaryPart", "Health", "MaxHealth", "WalkSpeed", "JumpPower", "JumpHeight", "ToolTip",
     "RequiresHandle", "CanBeDropped", "ManualActivationOnly", "Image", "AutoButtonColor", "Selectable", "ZIndex", "LayoutOrder",
     "AbsolutePosition", "AbsoluteSize", "SoundId", "Volume", "Playing", "Looped", "AnimationId", "MeshId", "TextureID", "Texture"}
+local INSPECT_MAX_CHILDREN = 60
 
 local function inspect(inst)
+    local D = STR.DET
     local lines = {}
     local function add(s) lines[#lines + 1] = s end
     local okN, name = pcall(function() return inst.Name end)
-    if not okN then return "El objeto ya no es accesible." end
-    add("Objeto: " .. tostring(name))
-    add("Ruta:   " .. U.path(inst))
+    if not okN then return D.GONE end
+    add(string.format(D.OBJECT, tostring(name)))
+    add(string.format(D.PATH, U.path(inst)))
     local okA, alive = pcall(function() return inst:IsDescendantOf(game) end)
-    add("Sigue en el juego: " .. tostring(okA and alive))
+    add(string.format(D.ALIVE, tostring(okA and alive)))
     add("")
-    add("— Propiedades consultables (las que el cliente puede leer) —")
+    add(D.PROPS)
     for _, p in ipairs(PROPS) do
         local ok, v = pcall(function() return inst[p] end)
-        if ok and v ~= nil and p ~= "Name" then
-            add(string.format("%-18s %s", p, U.ser(v)))
-        end
+        if ok and v ~= nil and p ~= "Name" then add(string.format("%-18s %s", p, U.ser(v))) end
     end
     local okAt, attrs = pcall(function() return inst:GetAttributes() end)
     if okAt and attrs and next(attrs) then
         add("")
-        add("— Atributos —")
+        add(D.ATTRS)
         for k, v in pairs(attrs) do add(string.format("%-18s %s", tostring(k), U.ser(v))) end
     end
     if S.CollectionService then
         local okT, tags = pcall(function() return S.CollectionService:GetTags(inst) end)
-        if okT and tags and #tags > 0 then add(""); add("Tags: " .. table.concat(tags, ", ")) end
+        if okT and tags and #tags > 0 then add(""); add(string.format(D.TAGS, table.concat(tags, ", "))) end
     end
     local okC, kids = pcall(function() return inst:GetChildren() end)
     if okC and kids then
         add("")
-        add("— Hijos directos: " .. #kids .. " —")
+        add(string.format(D.CHILDREN, #kids))
         for i, k in ipairs(kids) do
-            if i > 60 then add("… +" .. (#kids - 60)) break end
+            if i > INSPECT_MAX_CHILDREN then add(string.format(D.MORE, #kids - INSPECT_MAX_CHILDREN)) break end
             local okk, s = pcall(function() return k.ClassName .. "  " .. k.Name end)
             add("  " .. (okk and s or "?"))
         end
     end
     add("")
-    add("Nota: los scripts y su código fuente no se leen; solo propiedades replicadas.")
+    add(D.NOTE)
     return table.concat(lines, "\n")
 end
 
 local function openInspector(inst)
     local function show()
         local watching = WATCH.has(inst)
-        UI.detail("Inspector · " .. tostring(inst.Name), inspect(inst), watching and "Dejar de vigilar" or "Vigilar cambios", function()
+        UI.detail(string.format(STR.INSPECTOR, tostring(inst.Name)), inspect(inst), watching and STR.UNWATCH_BTN or STR.WATCH_BTN, function()
             local on = WATCH.toggle(inst)
-            UI.toast(on and "Vigilando .Changed de este objeto (máx. 8)" or "Ya no se vigila")
+            UI.toast(on and string.format(STR.WATCH_ON, CONFIG.MAX_WATCH) or STR.WATCH_OFF)
             show()
         end)
     end
     show()
 end
 
-local function match(q, ...)
-    if q == "" then return true end
-    for i = 1, select("#", ...) do
-        local v = select(i, ...)
-        if v and U.lower(v):find(q, 1, true) then return true end
-    end
-    return false
+---------------- Filtro de registros (categoría + búsqueda + modo + jugadores)
+local logState = {q = "", cat = CFG.get("logCat", 1), box = nil, catBtn = nil}
+if not CATS[logState.cat] then logState.cat = 1 end
+
+local function logVisible(e, q, cat)
+    if cat ~= "Todas" and e.cat ~= cat then return false end
+    if not MODE.passes(e) or not FEED.passes(e) then return false end
+    return U.match(q, e.name, e.args, e.extra, e.cat, e.types, e.player, e.remote, e.kind)
 end
 
-local function rich(hex, s) return '<font color="' .. hex .. '">' .. U.esc(s) .. '</font>' end
-
----------------------------------------------------------------- MAIN
-local STUDIO_SCRIPT -- se define al final
-local LIMITS = [[
-QUÉ FUNCIONA EN iPHONE CON DELTA (observado de verdad)
-• Lista de RemoteEvent, UnreliableRemoteEvent, RemoteFunction, BindableEvent y BindableFunction replicados al cliente (Workspace, ReplicatedStorage, ReplicatedFirst, Players, Lighting, StarterGui, StarterPack, StarterPlayer, SoundService, Teams, Chat, TextChatService). Se actualiza cuando aparecen o desaparecen.
-• Señales servidor → cliente: OnClientEvent (nombre, hora, argumentos, tipos, contador).
-• BindableEvent.Event (comunicación local del cliente).
-• Herramientas: aparecer/desaparecer, mover, equipar, desequipar, activar.
-• Valores (ValueBase) y atributos de TU jugador y personaje que cambian.
-• Botones de tu PlayerGui y sus clics (.Activated).
-• Errores y advertencias de la consola del cliente (LogService).
-• FPS, tiempo de frame, memoria, ping, KB/s de red, física: lecturas aproximadas del cliente.
-
-QUÉ NO SE PUEDE DESDE EL CLIENTE (y no se intenta)
-• Lo que el cliente ENVÍA (FireServer / InvokeServer): requeriría hookear __namecall; este monitor no modifica funciones globales.
-• RemoteFunction.OnClientInvoke y BindableFunction.OnInvoke: solo se ven reemplazando el callback del juego, así que solo se listan.
-• Código fuente de scripts del servidor, eventos internos del servidor, ServerStorage y ServerScriptService: no se replican al cliente.
-• La función interna de un botón: se ve el clic, no lo que hace.
-• Memoria y CPU del servidor, Script Profiler y MicroProfiler completos: herramientas de Roblox Studio / consola de desarrollador con permisos.
-
-PARA TU PROPIO JUEGO (Roblox Studio)
-• Pega el "Script de Studio" en ServerScriptService. Registra OnServerEvent/OnServerInvoke de tus remotos (jugador, argumentos, tipos, frecuencia) en la consola del servidor y, si agregas tu UserId, lo envía a este panel por el remoto GOY_DiagFeed (categoría "Servidor").
-• En Studio usa también: Developer Console (F9) → Server, Script Profiler y MicroProfiler (Ctrl+F6).
-]]
-
-do
-    local page = UI.pages.MAIN
-    local tb = UI.toolbar(page)
-    tb.button("Copiar resumen", function() UI.copyOrShow("Resumen", UI.summaryText()) end, TH.cyan, 120)
-    tb.button("Limitaciones", function() UI.detail("Qué funciona y qué no", LIMITS) end, nil, 104)
-    tb.button("Script Studio", function()
-        UI.detail("Script de Studio (servidor, solo tu juego)", STUDIO_SCRIPT)
-    end, TH.violet, 108)
-    tb.button("Escala " .. math.floor(CFG.get("scale", 1) * 100) .. "%", function(b)
-        local sc = UI.cycleScale()
-        b.Text = "Escala " .. math.floor(sc * 100 + 0.5) .. "%"
-    end, nil, 104)
-    if CAP.queue_on_teleport then
-        local function label() return "Teleport: " .. (CFG.get("reloadOnTeleport", false) and "recargar" or "no") end
-        tb.button(label(), function(b)
-            CFG.set("reloadOnTeleport", not CFG.get("reloadOnTeleport", false))
-            b.Text = label()
-            UI.toast(CFG.get("reloadOnTeleport", false) and "Se recargará solo al teletransportarte (desde tu repo de GitHub)" or "No se recargará tras teletransporte")
-        end, TH.violet, 140)
-    end
-    tb.button("Apagar", function() G.destroy() end, TH.bad, 76)
-    UI.lists.MAIN = UI.list(page, 52)
+local function filteredLogs(limit)
+    local q, cat = U.lower(logState.q), CATS[logState.cat]
+    local out = {}
+    LOG.iter(function(e)
+        if logVisible(e, q, cat) then out[#out + 1] = e end
+        return not limit or #out < limit
+    end)
+    return out
 end
 
+function UI.logSearch(text)
+    logState.q = text
+    if logState.box then logState.box.Text = text end
+    UI.setTab("LOGS")
+end
+
+local function logRow(e)
+    local hex = CAT_HEX[e.cat] or HEX.text
+    local who = e.player and ("  " .. rich(HEX.warn, "@" .. tostring(e.player))) or ""
+    local preview = e.args ~= "" and e.args or e.extra
+    return {
+        title = rich(HEX.dim, e.t) .. "  " .. rich(hex, e.cat) .. "  " .. U.esc(e.name) .. who .. (e.dir ~= "" and ("  " .. rich(HEX.dim, "· " .. e.dir)) or ""),
+        sub = U.esc(U.trunc(U.oneLine(preview), CONFIG.PREVIEW_CHARS)),
+        color = e.alert and TH.bad or hexColor(hex),
+        onTap = function() UI.detail(e.cat .. " · " .. e.name, LOG.format(e)) end,
+    }
+end
+
+---------------- Resumen y textos para copiar
 function UI.summaryText()
-    local t = {}
-    t[#t + 1] = "GOY Diagnostics · " .. U.fullDate()
-    t[#t + 1] = "Juego PlaceId " .. tostring(game.PlaceId) .. " · jugador " .. LP.Name
-    t[#t + 1] = "Ejecutor: " .. CAP.executor .. " · copiar: " .. (CAP.setclipboard and "sí" or "no") .. " · archivos: " .. (CAP.writefile and "sí" or "no")
-    t[#t + 1] = "Objetos revisados: " .. REG.scanned .. (REG.scanDone and "" or " (escaneando…)")
+    local t = {
+        "GOY Diagnostics v" .. CONFIG.VERSION .. " · " .. U.fullDate(),
+        "Juego PlaceId " .. tostring(game.PlaceId) .. " · jugador " .. LP.Name .. " (" .. tostring(LP.UserId) .. ")",
+        "Ejecutor: " .. CAP.executor .. " · copiar: " .. (CAP.setclipboard and STR.YES or STR.NO) .. " · archivos: " .. (CAP.writefile and STR.YES or STR.NO),
+        "Modo: " .. MODE.def.label .. " · Jugadores: " .. FEED.label(),
+        "Objetos revisados: " .. REG.scanned .. (REG.scanDone and "" or STR.SCANNING),
+    }
     local counts = {}
     for _, e in ipairs(REG.remotes) do counts[e.class] = (counts[e.class] or 0) + 1 end
     for _, c in ipairs({"RemoteEvent", "UnreliableRemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction"}) do
         t[#t + 1] = "  " .. c .. ": " .. (counts[c] or 0)
     end
     t[#t + 1] = "Herramientas: " .. #REG.tools .. " · Botones: " .. #REG.buttons
-    t[#t + 1] = "Registros: " .. LOG.total .. " (guardados " .. LOG.n .. "/" .. LOG.max .. ", spam no guardado " .. LOG.suppressed .. ")"
+    t[#t + 1] = string.format("Registros: %d (guardados %d/%d, spam no guardado %d)", LOG.total, LOG.n, LOG.max, LOG.suppressed)
+    t[#t + 1] = "Servidor instrumentado: " .. (FEED.remote and STR.YES or STR.NO) .. " · feed " .. FEED.received .. " · descartados por el servidor " .. FEED.droppedByServer
     t[#t + 1] = string.format("FPS %.0f · Ping %s · Memoria %s", PERF.fps, PERF.ping and string.format("%.0f ms", PERF.ping) or "n/d",
         PERF.mem and string.format("%.0f MB", PERF.mem) or "n/d")
     t[#t + 1] = "Consola: " .. CONSOLE.errors .. " errores, " .. CONSOLE.warnings .. " advertencias"
@@ -1408,6 +2076,57 @@ function UI.summaryText()
     return table.concat(t, "\n")
 end
 
+local function exportCapture()
+    local cap = MODE.lastCapture
+    if not cap then UI.toast(STR.CAPTURE_NONE) return end
+    local base = "captura_" .. U.fileStamp()
+    local ok, where = U.export(base .. ".txt", cap.text)
+    local json = U.json(cap.data)
+    if ok and json then U.export(base .. ".json", json) end
+    UI.toast(ok and string.format(STR.SAVED, where) or string.format(STR.EXPORT_FAIL, tostring(where)))
+end
+
+local function showCapture()
+    if not MODE.lastCapture then UI.toast(STR.CAPTURE_NONE) return end
+    UI.detail(STR.CAPTURE_TITLE, MODE.lastCapture.text, STR.EXPORT, exportCapture)
+end
+
+---------------- MAIN
+local function confirmTeleportReload(button)
+    if CFG.get("reloadOnTeleport", false) then
+        CFG.set("reloadOnTeleport", false)
+        button.Text = string.format(STR.BTN_TELEPORT, STR.TELEPORT_OFF)
+        UI.toast(STR.TELEPORT_DONE_OFF)
+        return
+    end
+    UI.detail(STR.TELEPORT_TITLE, string.format(STR.TELEPORT_BODY, CONFIG.RELOAD_URL), STR.CONFIRM, function()
+        CFG.set("reloadOnTeleport", true)
+        CFG.set("reloadUrl", CONFIG.RELOAD_URL) -- si la URL de CONFIG cambia, hay que volver a confirmar
+        button.Text = string.format(STR.BTN_TELEPORT, STR.TELEPORT_ON)
+        detail.Visible = false
+        UI.toast(STR.TELEPORT_DONE_ON)
+    end)
+end
+
+local function teleportArmed()
+    return CFG.get("reloadOnTeleport", false) and CFG.get("reloadUrl", "") == CONFIG.RELOAD_URL
+end
+
+do
+    local page = UI.pages.MAIN
+    local tb = UI.toolbar(page)
+    addSharedControls(tb)
+    tb.button(STR.BTN_SUMMARY, function() UI.copyOrShow(STR.SUMMARY_TITLE, UI.summaryText()) end, TH.cyan, 120)
+    tb.button(STR.BTN_LIMITS, function() UI.detail(STR.LIMITS_TITLE, STR.LIMITS) end, nil, 104)
+    tb.button(STR.BTN_STUDIO, function() UI.detail(STR.STUDIO_TITLE, STUDIO_SCRIPT) end, TH.violet, 108)
+    tb.button(UI.scaleLabel(), function(b) b.Text = UI.scaleLabel(UI.cycleScale()) end, nil, 104)
+    if CAP.queue_on_teleport then
+        tb.button(string.format(STR.BTN_TELEPORT, teleportArmed() and STR.TELEPORT_ON or STR.TELEPORT_OFF), confirmTeleportReload, TH.violet, 140)
+    end
+    tb.button(STR.BTN_OFF, function() G.destroy() end, TH.bad, 76)
+    UI.lists.MAIN = UI.list(page, LIST_TOP)
+end
+
 local function renderMain()
     local items = {}
     local function row(title, sub, color, tap) items[#items + 1] = {title = title, sub = sub, color = color, onTap = tap} end
@@ -1416,129 +2135,118 @@ local function renderMain()
         counts[e.class] = (counts[e.class] or 0) + 1
         if e.count > 0 then active = active + 1 end
     end
-    row(rich(HEX.ok, "● Monitor activo") .. "  " .. rich(HEX.dim, LOG.paused and "(registro en pausa)" or ""),
-        "Ejecutor: " .. U.esc(CAP.executor) .. " · copiar " .. (CAP.setclipboard and "sí" or "no") .. " · exportar " .. (CAP.writefile and "sí" or "no") ..
-        " · táctil " .. (CAP.touch and "sí" or "no"), TH.ok)
-    row(rich(HEX.cyan, "Objetos de comunicación: " .. #REG.remotes),
-        "RE " .. (counts.RemoteEvent or 0) .. " · URE " .. (counts.UnreliableRemoteEvent or 0) .. " · RF " .. (counts.RemoteFunction or 0) ..
-        " · BE " .. (counts.BindableEvent or 0) .. " · BF " .. (counts.BindableFunction or 0) .. " · con actividad " .. active,
-        TH.cyan, function() UI.setTab("REMOTES") end)
-    row(rich(HEX.warn, "Herramientas: " .. #REG.tools) .. "   " .. rich(HEX.violet, "Botones: " .. #REG.buttons),
-        "Instancias +" .. REG.instAdded .. " / −" .. REG.instRemoved .. " desde el inicio · revisados " .. REG.scanned .. (REG.scanDone and "" or " (escaneando…)"),
-        TH.warn, function() UI.setTab("TOOLS") end)
-    row(rich(HEX.text, "Registros: " .. LOG.total),
-        string.format("guardados %d/%d · %.1f/s · spam no guardado %d · en pausa %d", LOG.n, LOG.max, PERF.logRate, LOG.suppressed, LOG.droppedPaused),
-        TH.violet, function() UI.setTab("LOGS") end)
-    row(rich(HEX.ok, string.format("FPS %.0f", PERF.fps)) .. "  " .. rich(HEX.cyan, PERF.ping and string.format("Ping %.0f ms", PERF.ping) or "Ping n/d") ..
-        "  " .. rich(HEX.violet, PERF.mem and string.format("Mem %.0f MB", PERF.mem) or "Mem n/d"),
-        "Errores " .. CONSOLE.errors .. " · advertencias " .. CONSOLE.warnings .. " · errores internos del monitor " .. G.internalErrors,
-        TH.ok, function() UI.setTab("PERFORMANCE") end)
-    -- últimos 5 eventos
-    local n = 0
-    LOG.iter(function(e)
-        n = n + 1
-        row(rich(CAT_HEX[e.cat] or HEX.text, e.cat) .. "  " .. U.esc(e.name), U.esc(e.t .. "  " .. U.trunc((e.args ~= "" and e.args or e.extra):gsub("\n", " · "), 140)),
-            TH.line, function() UI.detail(e.cat .. " · " .. e.name, LOG.format(e)) end)
-        return n < 5
-    end)
-    row(rich(HEX.dim, "ⓘ Qué se observa y qué requiere servidor"), "Toca para ver las limitaciones reales y la alternativa de Studio", TH.line,
-        function() UI.detail("Qué funciona y qué no", LIMITS) end)
+    local yn = function(b) return b and STR.YES or STR.NO end
+    row(rich(HEX.ok, STR.MAIN_ACTIVE) .. "  " .. rich(HEX.dim, LOG.paused and STR.MAIN_PAUSED or ""),
+        U.esc(string.format(STR.MAIN_EXEC, CAP.executor, yn(CAP.setclipboard), yn(CAP.writefile), yn(CAP.touch))), TH.ok)
+    row(rich(HEX.warn, string.format(STR.MAIN_MODE, MODE.def.label, FEED.label())), STR.MAIN_MODE_SUB, TH.warn)
+    row(rich(FEED.remote and HEX.ok or HEX.dim, string.format(STR.MAIN_FEED, FEED.remote and STR.MAIN_FEED_YES or STR.MAIN_FEED_NONE)),
+        string.format(STR.MAIN_FEED_SUB, FEED.label(), FEED.serverMode and FEED.label(FEED.serverMode) or "—", FEED.received, FEED.droppedByServer), TH.ok)
+    if MODE.capture or MODE.lastCapture then
+        local status = MODE.capture and string.format(STR.CAPTURE_LEFT, MODE.captureLeft()) or
+            string.format(STR.CAPTURE_DONE, MODE.lastCapture.data.total, MODE.lastCapture.data.dur)
+        row(rich(HEX.violet, string.format(STR.MAIN_CAPTURE, status)), STR.MAIN_CAPTURE_SUB, TH.violet, showCapture)
+    end
+    row(rich(HEX.cyan, string.format(STR.MAIN_COMM, #REG.remotes)),
+        string.format(STR.MAIN_COMM_SUB, counts.RemoteEvent or 0, counts.UnreliableRemoteEvent or 0, counts.RemoteFunction or 0,
+            counts.BindableEvent or 0, counts.BindableFunction or 0, active), TH.cyan, function() UI.setTab("REMOTES") end)
+    row(rich(HEX.warn, string.format(STR.MAIN_TOOLS, #REG.tools)) .. "   " .. rich(HEX.violet, string.format(STR.MAIN_BUTTONS, #REG.buttons)),
+        string.format(STR.MAIN_INST, REG.instAdded, REG.instRemoved, REG.scanned, REG.scanDone and "" or STR.SCANNING), TH.warn, function() UI.setTab("TOOLS") end)
+    row(rich(HEX.text, string.format(STR.MAIN_LOGS, LOG.total)),
+        string.format(STR.MAIN_LOGS_SUB, LOG.n, LOG.max, PERF.logRate, LOG.suppressed, LOG.droppedPaused), TH.violet, function() UI.setTab("LOGS") end)
+    row(rich(HEX.ok, string.format(STR.MAIN_PERF, PERF.fps)) .. "  " .. rich(HEX.cyan, PERF.ping and string.format(STR.MAIN_PING, PERF.ping) or STR.MAIN_PING_NA) ..
+        "  " .. rich(HEX.violet, PERF.mem and string.format(STR.MAIN_MEM, PERF.mem) or STR.MAIN_MEM_NA),
+        string.format(STR.MAIN_PERF_SUB, CONSOLE.errors, CONSOLE.warnings, G.internalErrors), TH.ok, function() UI.setTab("PERFORMANCE") end)
+    for _, e in ipairs(filteredLogs(CONFIG.MAIN_RECENT)) do items[#items + 1] = logRow(e) end
+    row(rich(HEX.dim, STR.MAIN_INFO), STR.MAIN_INFO_SUB, TH.line, function() UI.detail(STR.LIMITS_TITLE, STR.LIMITS) end)
     UI.lists.MAIN.set(items)
 end
 
----------------------------------------------------------------- REMOTES
+---------------- REMOTES
+local CLS_FILTERS, CLS_SHORT, SORTS = STR.CLS_FILTERS, STR.CLS_SHORT, STR.SORTS
 local remoteState = {q = "", cls = CFG.get("remoteCls", 1), sort = CFG.get("remoteSort", 1)}
-local CLS_FILTERS = {"Todas", "RemoteEvent", "UnreliableRemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Con actividad"}
-local CLS_SHORT = {Todas = "Clase: todas", RemoteEvent = "RemoteEvent", UnreliableRemoteEvent = "Unreliable", RemoteFunction = "RemoteFunction",
-    BindableEvent = "BindableEvent", BindableFunction = "BindableFunc", ["Con actividad"] = "Con actividad"}
-local SORTS = {"Actividad", "Nombre", "Ruta"}
+if not CLS_FILTERS[remoteState.cls] then remoteState.cls = 1 end
+if not SORTS[remoteState.sort] then remoteState.sort = 1 end
+
+local REMOTE_SORT = {
+    Actividad = function(a, b) if a.count ~= b.count then return a.count > b.count end return a.name < b.name end,
+    Nombre = function(a, b) return U.lower(a.name) < U.lower(b.name) end,
+    Ruta = function(a, b) return a.path < b.path end,
+}
+
 local function filteredRemotes()
-    local q = U.lower(remoteState.q)
-    local f = CLS_FILTERS[remoteState.cls]
+    local q, f = U.lower(remoteState.q), CLS_FILTERS[remoteState.cls]
     local out = {}
     for _, e in ipairs(REG.remotes) do
         local okc = (f == "Todas") or (f == "Con actividad" and e.count > 0) or (e.class == f)
-        if okc and match(q, e.name, e.path, e.class, e.loc) then out[#out + 1] = e end
+        if okc and U.match(q, e.name, e.path, e.class, e.loc) then out[#out + 1] = e end
     end
-    local s = SORTS[remoteState.sort]
-    table.sort(out, function(a, b)
-        if s == "Actividad" then
-            if a.count ~= b.count then return a.count > b.count end
-            return a.name < b.name
-        elseif s == "Nombre" then
-            return U.lower(a.name) < U.lower(b.name)
-        end
-        return a.path < b.path
-    end)
+    table.sort(out, REMOTE_SORT[SORTS[remoteState.sort]])
     return out
 end
+
 local function remoteText(e)
+    local D = STR.DET
     return table.concat({
-        "Nombre:     " .. e.name, "Clase:      " .. e.class, "Ruta:       " .. U.path(e.inst), "Ubicación:  " .. e.loc,
-        "Dirección:  " .. e.dir, "Detectado:  " .. e.addedAt, "Recibidos:  " .. e.count .. (e.last and ("  (último " .. e.last .. ")") or ""),
-        "", "Últimos argumentos (" .. (e.lastTypes ~= "" and e.lastTypes or "—") .. "):", e.lastArgs ~= "" and e.lastArgs or "(aún no recibido)",
-        "", e.observable and "Observado directamente desde el cliente." or
-            "Solo listado: observarlo exigiría reemplazar el callback del juego. Para verlo, instrumenta TU servidor con el Script de Studio.",
-        "Lo que el cliente envía al servidor con este objeto NO se observa (requiere instrumentación del servidor).",
+        string.format(D.R_NAME, e.name), string.format(D.R_CLASS, e.class), string.format(D.R_PATH, U.path(e.inst)),
+        string.format(D.R_LOC, e.loc), string.format(D.R_DIR, e.dir), string.format(D.R_SEEN, e.addedAt),
+        string.format(D.R_COUNT, e.count, e.last and string.format(D.R_LAST, e.last) or ""),
+        "", string.format(D.R_ARGS, e.lastTypes ~= "" and e.lastTypes or "—"), e.lastArgs ~= "" and e.lastArgs or D.R_NOARGS,
+        "", e.observable and STR.REMOTE_OBS or STR.REMOTE_NOOBS, STR.REMOTE_NOSEND,
     }, "\n")
 end
+
 do
     local page = UI.pages.REMOTES
     local tb = UI.toolbar(page)
-    local box = tb.search("Nombre, ruta, clase…", 150)
-    U.conn(box:GetPropertyChangedSignal("Text"), function() remoteState.q = box.Text; UI.force = true end)
-    if not CLS_FILTERS[remoteState.cls] then remoteState.cls = 1 end
-    if not SORTS[remoteState.sort] then remoteState.sort = 1 end
+    local box = tb.search(STR.REMOTE_SEARCH, 150)
+    U.conn(box:GetPropertyChangedSignal("Text"), function() remoteState.q = box.Text; UI.force = true end, "buscar remotos")
     tb.button(CLS_SHORT[CLS_FILTERS[remoteState.cls]], function(b)
         remoteState.cls = remoteState.cls % #CLS_FILTERS + 1
         b.Text = CLS_SHORT[CLS_FILTERS[remoteState.cls]]
         CFG.set("remoteCls", remoteState.cls)
         UI.force = true
     end, TH.cyan, 116)
-    tb.button("Orden: " .. SORTS[remoteState.sort], function(b)
+    tb.button(string.format(STR.SORT_BTN, SORTS[remoteState.sort]), function(b)
         remoteState.sort = remoteState.sort % #SORTS + 1
-        b.Text = "Orden: " .. SORTS[remoteState.sort]
+        b.Text = string.format(STR.SORT_BTN, SORTS[remoteState.sort])
         CFG.set("remoteSort", remoteState.sort)
         UI.force = true
     end, nil, 124)
-    tb.button("Copiar", function()
-        local t = {"GOY Diagnostics · remotos (" .. U.fullDate() .. ")"}
-        for _, e in ipairs(filteredRemotes()) do
-            t[#t + 1] = string.format("%-22s ×%-5d %-24s %s", e.class, e.count, e.loc, e.path)
-        end
-        UI.copyOrShow("Remotos", table.concat(t, "\n"))
+    tb.button(STR.COPY, function()
+        local t = {string.format(STR.REMOTES_COPY_HEAD, U.fullDate())}
+        for _, e in ipairs(filteredRemotes()) do t[#t + 1] = string.format("%-22s ×%-5d %-24s %s", e.class, e.count, e.loc, e.path) end
+        UI.copyOrShow(STR.REMOTES_TITLE, table.concat(t, "\n"))
     end, TH.ok, 72)
-    UI.lists.REMOTES = UI.list(page, 52)
-end
-local function renderRemotes()
-    local items = {}
-    for _, e in ipairs(filteredRemotes()) do
-        local hex = CLASS_HEX[e.class] or HEX.text
-        local cnt = e.observable and (e.count > 0 and rich(HEX.warn, "  ×" .. e.count) or rich(HEX.dim, "  ×0")) or rich(HEX.dim, "  (no observable)")
-        items[#items + 1] = {
-            title = rich(hex, e.name) .. cnt,
-            sub = U.esc(e.class .. " · " .. e.loc .. (e.last and (" · " .. e.last) or "") .. " · " .. e.path),
-            color = Color3.fromHex and Color3.fromHex(hex) or TH.cyan,
-            onTap = function()
-                UI.detail(e.class .. " · " .. e.name, remoteText(e), "Ver en LOGS", function()
-                    UI.logSearch(e.name)
-                end)
-            end,
-        }
-    end
-    if #items == 0 then
-        items[1] = {title = rich(HEX.dim, REG.scanDone and "Sin resultados" or "Escaneando…"), sub = "Cambia la búsqueda o el filtro"}
-    end
-    UI.lists.REMOTES.set(items)
+    UI.lists.REMOTES = UI.list(page, LIST_TOP)
 end
 
----------------------------------------------------------------- TOOLS
-local toolState = {mode = 1, q = "", results = {}, searching = false}
-local TOOL_MODES = {"Herramientas", "Contenedores", "Buscar objetos", "Vigilados"}
+local function renderRemotes()
+    local list = filteredRemotes()
+    if #list == 0 then
+        UI.lists.REMOTES.set({{title = rich(HEX.dim, REG.scanDone and STR.NO_RESULTS or STR.SCANNING_T), sub = STR.NO_RESULTS_SUB}})
+        return
+    end
+    UI.lists.REMOTES.setLazy(#list, function(i)
+        local e = list[i]
+        local hex = CLASS_HEX[e.class] or HEX.text
+        local cnt = e.observable and rich(e.count > 0 and HEX.warn or HEX.dim, "  ×" .. e.count) or rich(HEX.dim, STR.REMOTE_NOT_OBS)
+        return {
+            title = rich(hex, e.name) .. cnt,
+            sub = U.esc(string.format(STR.REMOTE_ROW_SUB, e.class, e.loc, e.last and (" · " .. e.last) or "", e.path)),
+            color = hexColor(hex),
+            onTap = function() UI.detail(e.class .. " · " .. e.name, remoteText(e), STR.REMOTE_SEE_LOGS, function() UI.logSearch(e.name) end) end,
+        }
+    end)
+end
+
+---------------- TOOLS
+local TOOL_MODES = STR.TOOL_MODES
+local toolState = {mode = 1, q = "", results = {}, searching = false, modeBtn = nil}
+
 local function runSearch(q)
     if toolState.searching then return end
     q = U.lower(q)
-    if #q < 2 then UI.toast("Escribe al menos 2 letras") return end
+    if #q < 2 then UI.toast(STR.MIN_CHARS) return end
     toolState.searching, toolState.results = true, {}
     UI.force = true
     task.spawn(function()
@@ -1546,154 +2254,156 @@ local function runSearch(q)
         for _, c in ipairs(REG.containers) do
             local ok, list = pcall(function() return c.inst:GetDescendants() end)
             if ok then
-                for i, inst in ipairs(list) do
-                    if not G.alive or #toolState.results >= 200 then break end
+                for _, inst in ipairs(list) do
+                    if not G.alive or #toolState.results >= CONFIG.MAX_SEARCH then break end
                     local okn, nm = pcall(function() return inst.Name end)
-                    if okn and U.lower(nm):find(q, 1, true) and not isOwnGui(inst) then
+                    if okn and U.lower(nm):find(q, 1, true) and not REG.isOwnGui(inst) then
                         toolState.results[#toolState.results + 1] = {inst = inst, loc = c.name}
                     end
                     n = n + 1
-                    if n % 500 == 0 then task.wait() end
+                    if n % CONFIG.SEARCH_YIELD_EVERY == 0 then task.wait() end
                 end
             end
         end
         toolState.searching = false
         UI.force = true
-        UI.toast(#toolState.results .. " objetos encontrados" .. (#toolState.results >= 200 and " (límite 200)" or ""))
+        UI.toast(string.format(STR.FOUND, #toolState.results, #toolState.results >= CONFIG.MAX_SEARCH and string.format(STR.FOUND_LIMIT, CONFIG.MAX_SEARCH) or ""))
     end)
 end
+
+local function setToolMode(i)
+    toolState.mode = i
+    if toolState.modeBtn then toolState.modeBtn.Text = TOOL_MODES[i] end
+    UI.force = true
+end
+
 do
     local page = UI.pages.TOOLS
     local tb = UI.toolbar(page)
-    tb.button("Herramientas", function(b)
-        toolState.mode = toolState.mode % #TOOL_MODES + 1
-        b.Text = TOOL_MODES[toolState.mode]
-        UI.force = true
-    end, TH.warn, 116)
-    local box = tb.search("Filtrar / buscar…", 140)
-    U.conn(box:GetPropertyChangedSignal("Text"), function() toolState.q = box.Text; UI.force = true end)
-    U.conn(box.FocusLost, function(enter) if enter and TOOL_MODES[toolState.mode] == "Buscar objetos" then runSearch(box.Text) end end)
-    tb.button("Buscar", function()
-        if TOOL_MODES[toolState.mode] ~= "Buscar objetos" then
-            toolState.mode = 3
-            for _, ch in ipairs(tb.bar:GetChildren()) do
-                if ch:IsA("TextButton") and ch.LayoutOrder == 1 then ch.Text = TOOL_MODES[3] end
-            end
-        end
+    toolState.modeBtn = tb.button(TOOL_MODES[1], function() setToolMode(toolState.mode % #TOOL_MODES + 1) end, TH.warn, 116)
+    local box = tb.search(STR.TOOL_FILTER, 140)
+    U.conn(box:GetPropertyChangedSignal("Text"), function() toolState.q = box.Text; UI.force = true end, "filtrar tools")
+    U.conn(box.FocusLost, function(enter) if enter and toolState.mode == 3 then runSearch(box.Text) end end, "buscar enter")
+    tb.button(STR.SEARCH, function()
+        if toolState.mode ~= 3 then setToolMode(3) end
         runSearch(box.Text)
     end, TH.cyan, 72)
-    tb.button("Copiar", function()
-        local t = {"GOY Diagnostics · " .. TOOL_MODES[toolState.mode]}
+    tb.button(STR.COPY, function()
+        local t = {string.format(STR.DET.TOOLS_HEAD, TOOL_MODES[toolState.mode])}
         for _, it in ipairs(UI.lists.TOOLS.all()) do
-            t[#t + 1] = (it.copy or ((it.title or ""):gsub("<[^>]->", "") .. " · " .. (it.sub or ""):gsub("<[^>]->", "")))
+            t[#t + 1] = ((it.title or ""):gsub("<[^>]->", "")) .. " · " .. ((it.sub or ""):gsub("<[^>]->", ""))
         end
-        UI.copyOrShow("Herramientas", table.concat(t, "\n"))
+        UI.copyOrShow(TOOL_MODES[toolState.mode], table.concat(t, "\n"))
     end, TH.ok, 72)
-    UI.lists.TOOLS = UI.list(page, 52)
+    UI.lists.TOOLS = UI.list(page, LIST_TOP)
 end
-local function renderTools()
-    local items, q = {}, U.lower(toolState.q)
-    local mode = TOOL_MODES[toolState.mode]
-    if mode == "Herramientas" then
-        for _, e in ipairs(REG.tools) do
-            if match(q, e.name, e.owner, e.path) then
-                local stHex = (e.state == "equipada") and HEX.ok or HEX.warn
-                items[#items + 1] = {title = rich(HEX.warn, e.name) .. "  " .. rich(stHex, tostring(e.state)),
-                    sub = U.esc(e.class .. " · dueño " .. tostring(e.owner) .. " · equipada ×" .. e.equips .. " · " .. e.path),
-                    color = TH.warn, onTap = function() openInspector(e.inst) end}
-            end
+
+local TOOL_RENDER = {}
+TOOL_RENDER[1] = function(items, q)
+    for _, e in ipairs(REG.tools) do
+        if U.match(q, e.name, e.owner, e.path) then
+            local stHex = (e.state == STR.TOOL_STATE_EQUIPPED) and HEX.ok or HEX.warn
+            items[#items + 1] = {title = rich(HEX.warn, e.name) .. "  " .. rich(stHex, tostring(e.state)),
+                sub = U.esc(string.format(STR.DET.TOOL_SUB, e.class, tostring(e.owner), e.equips, e.path)),
+                color = TH.warn, onTap = function() openInspector(e.inst) end}
         end
-        if #items == 0 then items[1] = {title = rich(HEX.dim, "No hay herramientas visibles"), sub = "Solo se ven las replicadas a tu cliente (tu Backpack y personajes)"} end
-    elseif mode == "Contenedores" then
-        for _, c in ipairs(REG.containers) do
-            items[#items + 1] = {title = rich(HEX.cyan, c.name) .. "  " .. rich(HEX.text, tostring(c.count) .. " objetos"),
-                sub = "+" .. c.added .. " / −" .. c.removed .. " desde el inicio · toca para inspeccionar", color = TH.cyan,
-                onTap = function() openInspector(c.inst) end}
-        end
-        items[#items + 1] = {title = rich(HEX.dim, "ServerStorage / ServerScriptService"), sub = "No accesibles desde el cliente (no se replican)", color = TH.line}
-        items[#items + 1] = {title = rich(REG.logWorkspaceInstances and HEX.ok or HEX.dim,
-            "Registrar instancias nuevas de Workspace: " .. (REG.logWorkspaceInstances and "SÍ" or "NO")),
-            sub = "Toca para cambiar (puede generar mucho registro en juegos con proyectiles)", color = TH.violet,
-            onTap = function() REG.logWorkspaceInstances = not REG.logWorkspaceInstances; UI.force = true end}
-    elseif mode == "Buscar objetos" then
-        if toolState.searching then items[1] = {title = rich(HEX.cyan, "Buscando…"), sub = "Por partes, sin congelar el juego"} end
-        for _, r in ipairs(toolState.results) do
-            local ok, cls, nm = pcall(function() return r.inst.ClassName, r.inst.Name end)
-            if ok then
-                items[#items + 1] = {title = rich(HEX.text, nm) .. "  " .. rich(HEX.dim, cls), sub = U.esc(r.loc .. " · " .. U.path(r.inst)),
-                    color = TH.violet, onTap = function() openInspector(r.inst) end}
-            end
-        end
-        if #items == 0 then items[1] = {title = rich(HEX.dim, "Escribe un nombre y toca Buscar"), sub = "Busca en todos los contenedores accesibles (máx. 200)"} end
-    else
-        for _, w in ipairs(WATCH.list) do
-            items[#items + 1] = {title = rich(HEX.pink, w.name), sub = U.esc(U.path(w.inst) .. " · toca para inspeccionar"), color = TH.violet,
-                onTap = function() openInspector(w.inst) end}
-        end
-        if #items == 0 then items[1] = {title = rich(HEX.dim, "Nada vigilado"), sub = "Abre un objeto en el inspector y toca «Vigilar cambios»"} end
     end
+    if #items == 0 then items[1] = {title = rich(HEX.dim, STR.NO_TOOLS), sub = STR.NO_TOOLS_SUB} end
+end
+TOOL_RENDER[2] = function(items)
+    for _, c in ipairs(REG.containers) do
+        items[#items + 1] = {title = rich(HEX.cyan, c.name) .. "  " .. rich(HEX.text, string.format(STR.CONT_ROW, c.count)),
+            sub = string.format(STR.CONT_SUB, c.added, c.removed), color = TH.cyan, onTap = function() openInspector(c.inst) end}
+    end
+    items[#items + 1] = {title = rich(HEX.dim, STR.SERVER_ONLY), sub = STR.SERVER_ONLY_SUB, color = TH.line}
+    items[#items + 1] = {title = rich(REG.logWorkspaceInstances and HEX.ok or HEX.dim, string.format(STR.WS_LOG, REG.logWorkspaceInstances and STR.DET.YES_UP or STR.DET.NO_UP)),
+        sub = STR.WS_LOG_SUB, color = TH.violet, onTap = function() REG.logWorkspaceInstances = not REG.logWorkspaceInstances; UI.force = true end}
+end
+TOOL_RENDER[3] = function(items)
+    if toolState.searching then items[1] = {title = rich(HEX.cyan, STR.SEARCHING), sub = STR.SEARCHING_SUB} end
+    for _, r in ipairs(toolState.results) do
+        local ok, cls, nm = pcall(function() return r.inst.ClassName, r.inst.Name end)
+        if ok then
+            items[#items + 1] = {title = rich(HEX.text, nm) .. "  " .. rich(HEX.dim, cls), sub = U.esc(r.loc .. " · " .. U.path(r.inst)),
+                color = TH.violet, onTap = function() openInspector(r.inst) end}
+        end
+    end
+    if #items == 0 then items[1] = {title = rich(HEX.dim, STR.SEARCH_HINT), sub = string.format(STR.SEARCH_HINT_SUB, CONFIG.MAX_SEARCH)} end
+end
+TOOL_RENDER[4] = function(items)
+    for _, w in ipairs(WATCH.list) do
+        items[#items + 1] = {title = rich(HEX.pink, w.name), sub = U.esc(U.path(w.inst)), color = TH.violet, onTap = function() openInspector(w.inst) end}
+    end
+    if #items == 0 then items[1] = {title = rich(HEX.dim, STR.NO_WATCH), sub = STR.NO_WATCH_SUB} end
+end
+
+local function renderTools()
+    local items = {}
+    TOOL_RENDER[toolState.mode](items, U.lower(toolState.q))
     UI.lists.TOOLS.set(items)
 end
 
----------------------------------------------------------------- BUTTONS
+---------------- BUTTONS
+local BTN_FILTERS = STR.BTN_FILTERS
 local btnState = {q = "", f = 1}
-local BTN_FILTERS = {"Todos", "Visibles", "Ocultos", "Con clics"}
+local MAX_GUI_DEPTH = 40
+
 local function effVisible(inst)
     local ok, r = pcall(function()
-        local p = inst
-        local depth = 0
-        while p and depth < 40 do
+        local p, depth = inst, 0
+        while p and depth < MAX_GUI_DEPTH do
             if p:IsA("PlayerGui") then return true end
             if p:IsA("GuiObject") and not p.Visible then return false end
             if p:IsA("LayerCollector") and not p.Enabled then return false end
-            p = p.Parent
-            depth = depth + 1
+            p, depth = p.Parent, depth + 1
         end
         return p ~= nil
     end)
     return ok and r
 end
+
 local function buttonText(e)
-    local inst = e.inst
+    local D, inst = STR.DET, e.inst
     local function g(p) local ok, v = pcall(function() return inst[p] end) return ok and v or nil end
     return table.concat({
-        "Nombre:   " .. e.name, "Clase:    " .. e.class, "Ruta:     " .. U.path(inst),
-        "Texto:    " .. tostring(g("Text") or "(ImageButton sin texto)"), "Visible:  propio " .. tostring(g("Visible")) .. " · en pantalla " .. tostring(effVisible(inst)),
-        "Active:   " .. tostring(g("Active")) .. " · Interactable " .. tostring(g("Interactable")),
-        "Imagen:   " .. tostring(g("Image") or "—"),
-        "Clics observados: " .. e.clicks .. (e.lastClick and ("  (último " .. e.lastClick .. ")") or ""),
-        "", "Eventos de interfaz observables: Activated, MouseButton1Click, InputBegan (se registra Activated).",
-        "La función interna del botón NO es accesible: solo se puede ver el clic y lo que llegue después",
-        "(por ejemplo una señal en LOGS justo después del clic).",
+        string.format(D.B_NAME, e.name), string.format(D.B_CLASS, e.class), string.format(D.B_PATH, U.path(inst)),
+        string.format(D.B_TEXT, tostring(g("Text") or D.B_NOTEXT)),
+        string.format(D.B_VIS, tostring(g("Visible")), tostring(effVisible(inst))),
+        string.format(D.B_ACTIVE, tostring(g("Active")), tostring(g("Interactable"))),
+        string.format(D.B_IMAGE, tostring(g("Image") or "—")),
+        string.format(D.B_CLICKS, e.clicks, e.lastClick and string.format(D.R_LAST, e.lastClick) or ""),
+        "", D.B_NOTE,
     }, "\n")
 end
+
 do
     local page = UI.pages.BUTTONS
     local tb = UI.toolbar(page)
-    local box = tb.search("Texto, nombre, ruta…", 150)
-    U.conn(box:GetPropertyChangedSignal("Text"), function() btnState.q = box.Text; UI.force = true end)
-    tb.button("Todos", function(b)
+    local box = tb.search(STR.BTN_SEARCH, 150)
+    U.conn(box:GetPropertyChangedSignal("Text"), function() btnState.q = box.Text; UI.force = true end, "buscar botones")
+    tb.button(BTN_FILTERS[1], function(b)
         btnState.f = btnState.f % #BTN_FILTERS + 1
         b.Text = BTN_FILTERS[btnState.f]
         UI.force = true
     end, TH.violet, 90)
-    tb.button("Copiar", function()
-        local t = {"GOY Diagnostics · botones"}
+    tb.button(STR.COPY, function()
+        local t = {STR.DET.BUTTONS_HEAD}
         for _, e in ipairs(REG.buttons) do
             local okt, tx = pcall(function() return e.inst.Text end)
-            t[#t + 1] = string.format("%-12s %-5s ×%-4d %s  \"%s\"", e.class, effVisible(e.inst) and "vis" or "ocul", e.clicks, U.path(e.inst), okt and U.trunc(tx or "", 40) or "")
+            t[#t + 1] = string.format("%-12s %-5s ×%-4d %s  \"%s\"", e.class, effVisible(e.inst) and STR.DET.VIS_SHORT or STR.DET.HID_SHORT, e.clicks, U.path(e.inst), okt and U.trunc(tx or "", 40) or "")
         end
-        UI.copyOrShow("Botones", table.concat(t, "\n"))
+        UI.copyOrShow(STR.DET.BUTTONS_TITLE, table.concat(t, "\n"))
     end, TH.ok, 72)
-    UI.lists.BUTTONS = UI.list(page, 52)
+    UI.lists.BUTTONS = UI.list(page, LIST_TOP)
 end
+
 local function renderButtons()
-    local items, q, f = {}, U.lower(btnState.q), BTN_FILTERS[btnState.f]
+    local q, f = U.lower(btnState.q), BTN_FILTERS[btnState.f]
     local list = {}
     for _, e in ipairs(REG.buttons) do
         local okt, tx = pcall(function() return e.inst.Text end)
         tx = okt and tx or ""
-        if match(q, e.name, tx, e.path) then
+        if U.match(q, e.name, tx, e.path) then
             local vis = effVisible(e.inst)
             local okf = (f == "Todos") or (f == "Visibles" and vis) or (f == "Ocultos" and not vis) or (f == "Con clics" and e.clicks > 0)
             if okf then list[#list + 1] = {e = e, tx = tx, vis = vis} end
@@ -1704,245 +2414,282 @@ local function renderButtons()
         if a.vis ~= b.vis then return a.vis end
         return a.e.path < b.e.path
     end)
-    for _, it in ipairs(list) do
-        local e = it.e
-        items[#items + 1] = {
+    if #list == 0 then
+        UI.lists.BUTTONS.set({{title = rich(HEX.dim, STR.NO_BUTTONS), sub = STR.NO_BUTTONS_SUB}})
+        return
+    end
+    UI.lists.BUTTONS.setLazy(#list, function(i)
+        local it, e = list[i], list[i].e
+        return {
             title = rich(it.vis and HEX.violet or HEX.dim, (it.tx ~= "" and U.trunc(it.tx, 40) or e.name)) ..
                 (it.tx ~= "" and ("  " .. rich(HEX.dim, e.name)) or "") .. (e.clicks > 0 and rich(HEX.warn, "  ×" .. e.clicks) or ""),
-            sub = U.esc(e.class .. " · " .. (it.vis and "visible" or "oculto") .. " · " .. e.path),
+            sub = U.esc(e.class .. " · " .. (it.vis and STR.VISIBLE or STR.HIDDEN) .. " · " .. e.path),
             color = it.vis and TH.violet or TH.line,
-            onTap = function() UI.detail(e.class .. " · " .. e.name, buttonText(e), "Inspeccionar", function() openInspector(e.inst) end) end,
+            onTap = function() UI.detail(e.class .. " · " .. e.name, buttonText(e), STR.INSPECT, function() openInspector(e.inst) end) end,
         }
-    end
-    if #items == 0 then items[1] = {title = rich(HEX.dim, "Sin botones con este filtro"), sub = "Solo se exploran los botones de tu PlayerGui"} end
-    UI.lists.BUTTONS.set(items)
+    end)
 end
 
----------------------------------------------------------------- LOGS
-local logState = {q = "", cat = CFG.get("logCat", 1), box = nil}
-if not CATS[logState.cat] then logState.cat = 1 end
-local function filteredLogs(limit)
-    local q, cat = U.lower(logState.q), CATS[logState.cat]
-    local out = {}
-    LOG.iter(function(e)
-        if (cat == "Todas" or e.cat == cat) and match(q, e.name, e.args, e.extra, e.cat, e.types) then
-            out[#out + 1] = e
-        end
-        return not limit or #out < limit
-    end)
-    return out
+---------------- LOGS
+local function logsAsText(list)
+    local t = {string.format(STR.LOGS_COPY_HEAD, U.fullDate(), MODE.def.label, FEED.label())}
+    for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]) end
+    return table.concat(t, "\n")
 end
-function UI.logSearch(text)
-    logState.q = text
-    if logState.box then logState.box.Text = text end
-    UI.setTab("LOGS")
+
+local function exportLogs()
+    local list = filteredLogs()
+    local base = "logs_" .. U.fileStamp()
+    local ok, where = U.export(base .. ".txt", "PlaceId " .. tostring(game.PlaceId) .. "\n" .. logsAsText(list))
+    local records = {}
+    for i = #list, 1, -1 do records[#records + 1] = LOG.toRecord(list[i]) end
+    local json = U.json({version = CONFIG.VERSION, placeId = game.PlaceId, mode = MODE.def.id, players = FEED.filter, logs = records})
+    if ok and json then U.export(base .. ".json", json) end
+    UI.toast(ok and string.format(STR.SAVED, where) or string.format(STR.EXPORT_FAIL, tostring(where)))
 end
+
+local function setPaused(paused, b)
+    LOG.paused = paused
+    b.Text = paused and STR.RESUME or STR.PAUSE
+    b.TextColor3 = paused and TH.warn or TH.text
+    statusDot.BackgroundColor3 = paused and TH.warn or TH.ok
+    fabDot.BackgroundColor3 = paused and TH.warn or TH.ok
+    UI.force = true
+end
+
 do
     local page = UI.pages.LOGS
     local tb = UI.toolbar(page)
-    local box = tb.search("Buscar en registros…", 140)
+    local box = tb.search(STR.LOG_SEARCH, 140)
     logState.box = box
-    U.conn(box:GetPropertyChangedSignal("Text"), function() logState.q = box.Text; UI.force = true end)
-    logState.catBtn = tb.button("Categoría: " .. CATS[logState.cat], function(b)
+    U.conn(box:GetPropertyChangedSignal("Text"), function() logState.q = box.Text; UI.force = true end, "buscar logs")
+    addSharedControls(tb)
+    logState.catBtn = tb.button(string.format(STR.CAT_BTN, CATS[logState.cat]), function(b)
         logState.cat = logState.cat % #CATS + 1
-        b.Text = "Categoría: " .. CATS[logState.cat]
+        b.Text = string.format(STR.CAT_BTN, CATS[logState.cat])
         CFG.set("logCat", logState.cat)
         UI.force = true
     end, TH.cyan, 132)
-    tb.button("Pausa", function(b)
-        LOG.paused = not LOG.paused
-        b.Text = LOG.paused and "Reanudar" or "Pausa"
-        b.TextColor3 = LOG.paused and TH.warn or TH.text
-        statusDot.BackgroundColor3 = LOG.paused and TH.warn or TH.ok
-        fabDot.BackgroundColor3 = LOG.paused and TH.warn or TH.ok
-        UI.force = true
-    end, nil, 84)
-    tb.button("Limpiar", function() LOG.clear(); UI.force = true; UI.toast("Historial limpio") end, TH.bad, 76)
-    tb.button("Copiar", function()
-        local t = {"GOY Diagnostics · registros (" .. U.fullDate() .. ")"}
-        local list = filteredLogs()
-        for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]) end
-        UI.copyOrShow("Registros", table.concat(t, "\n"))
-    end, TH.ok, 72)
-    tb.button("Exportar", function()
-        local t = {"GOY Diagnostics · registros · " .. U.fullDate(), "PlaceId " .. tostring(game.PlaceId), ""}
-        local list = filteredLogs()
-        for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]) end
-        local name = "logs_" .. (tostring(os.time and os.time() or math.floor(os.clock()))) .. ".txt"
-        local ok, where = U.export(name, table.concat(t, "\n"))
-        UI.toast(ok and ("Guardado: " .. where) or ("No se pudo exportar: " .. tostring(where)))
-    end, TH.violet, 84)
-    UI.lists.LOGS = UI.list(page, 52)
+    tb.button(STR.PAUSE, function(b) setPaused(not LOG.paused, b) end, nil, 84)
+    tb.button(STR.CLEAR, function() LOG.clear(); UI.force = true; UI.toast(STR.CLEARED) end, TH.bad, 76)
+    tb.button(STR.COPY, function() UI.copyOrShow(STR.LOGS_TITLE, logsAsText(filteredLogs())) end, TH.ok, 72)
+    tb.button(STR.EXPORT, exportLogs, TH.violet, 84)
+    UI.lists.LOGS = UI.list(page, LIST_TOP)
 end
+
 local function renderLogs()
     local list = filteredLogs()
     if #list == 0 then
-        UI.lists.LOGS.set({{title = rich(HEX.dim, LOG.paused and "Registro en pausa" or "Sin registros todavía"),
-            sub = "Aparecen cuando el servidor te envía señales, cambian tus herramientas o valores, o tocas botones"}})
+        local filtered = MODE.def.id ~= "normal" or FEED.filter ~= "all"
+        UI.lists.LOGS.set({{title = rich(HEX.dim, LOG.paused and STR.LOGS_PAUSED or STR.NO_LOGS),
+            sub = filtered and string.format(STR.MODE_EMPTY_SUB, MODE.def.label, FEED.label()) or STR.NO_LOGS_SUB}})
         return
     end
-    -- Lista virtual: el texto de cada fila se arma solo cuando se ve.
-    UI.lists.LOGS.setLazy(#list, function(i)
-        local e = list[i]
-        local hex = CAT_HEX[e.cat] or HEX.text
-        local preview = e.args ~= "" and e.args or e.extra
-        return {
-            title = rich(HEX.dim, e.t) .. "  " .. rich(hex, e.cat) .. "  " .. U.esc(e.name) .. (e.dir ~= "" and ("  " .. rich(HEX.dim, "· " .. e.dir)) or ""),
-            sub = U.esc(U.trunc(preview:gsub("\n", "  ·  "), 180)),
-            color = Color3.fromHex and Color3.fromHex(hex) or TH.cyan,
-            onTap = function() UI.detail(e.cat .. " · " .. e.name, LOG.format(e)) end,
-        }
-    end)
+    UI.lists.LOGS.setLazy(#list, function(i) return logRow(list[i]) end)
 end
 
----------------------------------------------------------------- PERFORMANCE
-local PERF_NOTES = [[
-CÓMO SE MIDE CADA MÉTRICA (cliente, aproximado)
-• FPS: frames contados con RunService.RenderStepped cada segundo. Real del cliente.
-• Tiempo de frame: promedio y máximo del delta de RenderStepped en el último segundo.
-• Memoria total: Stats:GetTotalMemoryUsageMb() del CLIENTE (si el ejecutor/juego lo permite).
-• Memoria de scripts: Stats:GetMemoryUsageMbForTag(Script) del cliente.
-• Montón Lua: collectgarbage("count") del entorno donde corre este script, no del juego entero.
-• Ping: Player:GetNetworkPing() (latencia aislada, aproximada) o Stats "Data Ping" como respaldo.
-• Red: Stats.DataReceiveKbps / DataSendKbps del cliente.
-• Física: workspace:GetRealPhysicsFPS() del cliente.
-• Errores/advertencias: LogService.MessageOut (solo los del cliente).
-
-NECESITA ROBLOX STUDIO O ACCESO AL SERVIDOR
-• CPU y memoria del servidor, scripts del servidor, Script Profiler y MicroProfiler completos,
-  pestaña Server de la Developer Console (requiere permisos de desarrollador del juego).
-• En tu juego: Script de Studio (MAIN) + F9 → Server + Script Profiler + Ctrl+F6 (MicroProfiler).
-]]
-do
-    local page = UI.pages.PERFORMANCE
-    local tb = UI.toolbar(page)
-    tb.button("Copiar métricas", function() UI.copyOrShow("Rendimiento", UI.perfText()) end, TH.cyan, 124)
-    tb.button("¿Qué es aproximado?", function() UI.detail("Cómo se mide", PERF_NOTES) end, TH.violet, 150)
-    UI.lists.PERFORMANCE = UI.list(page, 52)
-end
+---------------- PERFORMANCE
 local BARS = {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
 local function spark(hist)
     local maxv = 1
     for _, v in ipairs(hist) do if v > maxv then maxv = v end end
     local t = {}
-    for _, v in ipairs(hist) do t[#t + 1] = BARS[math.clamp(math.floor(v / maxv * 7) + 1, 1, 8)] end
+    for _, v in ipairs(hist) do t[#t + 1] = BARS[math.clamp(math.floor(v / maxv * (#BARS - 1)) + 1, 1, #BARS)] end
     return table.concat(t)
 end
-local function fmt(v, f, unit) if v == nil then return "no disponible" end return string.format(f, v) .. (unit or "") end
+local function fmt(v, f, unit) if v == nil then return STR.NA end return string.format(f, v) .. (unit or "") end
+
 function UI.errorsText()
-    if #G.errors == 0 then return "Sin errores internos." end
+    if #G.errors == 0 then return STR.NO_INTERNAL end
     local t = {}
     for i, e in ipairs(G.errors) do
-        t[#t + 1] = string.format("#%d  [%s]  hace %.0f s", i, e.where, os.clock() - e.t)
+        t[#t + 1] = string.format(STR.PERF.ERR_ROW, i, e.where, os.clock() - e.t)
         t[#t + 1] = e.msg
         t[#t + 1] = ""
     end
     return table.concat(t, "\n")
 end
+
 do
-    local limiter = {rateName = "errores internos"}
+    local limiter = {}
     G.onInternalError = function(where, err)
-        if U.rateOk(limiter, "errores internos") then
-            LOG.add("Sistema", "Error interno", "", "", nil, tostring(where) .. ": " .. U.trunc(tostring(err):match("^[^\n]*") or "", 200))
+        if RATE.ok(limiter, STR.MSG.INTERNAL_RATE) then
+            LOG.add("Sistema", STR.MSG.INTERNAL, "", "", nil, tostring(where) .. ": " .. U.trunc(tostring(err):match("^[^\n]*") or "", 200), {alert = true})
         end
     end
 end
+
 function UI.perfText()
+    local P = STR.PERF
     return table.concat({
-        "GOY Diagnostics · rendimiento · " .. U.fullDate(),
-        "FPS: " .. fmt(PERF.fps, "%.1f") .. " · frame medio " .. fmt(PERF.frameAvg * 1000, "%.1f", " ms") .. " · máx " .. fmt((PERF.lastFrameMax or 0) * 1000, "%.1f", " ms"),
-        "Física: " .. fmt(PERF.physFps, "%.1f", " FPS"),
-        "Ping: " .. fmt(PERF.ping, "%.0f", " ms") .. (PERF.pingSrc ~= "" and (" (" .. PERF.pingSrc .. ")") or ""),
-        "Red: recibe " .. fmt(PERF.recv, "%.1f", " KB/s") .. " · envía " .. fmt(PERF.send, "%.1f", " KB/s"),
-        "Memoria cliente: " .. fmt(PERF.mem, "%.0f", " MB") .. " · scripts " .. fmt(PERF.memScript, "%.0f", " MB") .. " · montón Lua " .. fmt(PERF.luaHeap, "%.1f", " MB"),
-        "Instancias (Stats): " .. fmt(PERF.instCount, "%.0f"),
-        "Consola: " .. CONSOLE.errors .. " errores · " .. CONSOLE.warnings .. " advertencias",
-        "Monitor: " .. #G.conns .. " conexiones · render " .. string.format("%.2f", PERF.renderMs) .. " ms · " .. string.format("%.1f", PERF.renderRate) .. " actualizaciones/s",
-        "Registros: " .. LOG.total .. " · " .. string.format("%.1f", PERF.logRate) .. "/s · errores internos " .. G.internalErrors,
+        string.format(P.T_HEAD, U.fullDate()),
+        string.format(P.T_FPS, fmt(PERF.fps, "%.1f"), fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.1f", " ms")),
+        string.format(P.T_PHYS, fmt(PERF.physFps, "%.1f", " FPS")),
+        string.format(P.T_PING, fmt(PERF.ping, "%.0f", " ms"), PERF.pingSrc ~= "" and (" (" .. PERF.pingSrc .. ")") or ""),
+        string.format(P.T_NET, fmt(PERF.recv, "%.1f", " KB/s"), fmt(PERF.send, "%.1f", " KB/s")),
+        string.format(P.T_MEM, fmt(PERF.mem, "%.0f", " MB"), fmt(PERF.memScript, "%.0f", " MB"), fmt(PERF.luaHeap, "%.1f", " MB")),
+        string.format(P.T_INST, fmt(PERF.instCount, "%.0f")),
+        string.format(P.T_SERVER, FEED.stats or P.SERVER_NONE),
+        string.format(P.T_CONSOLE, CONSOLE.errors, CONSOLE.warnings),
+        string.format(P.T_MONITOR, #G.conns, PERF.renderMs, PERF.renderRate, MODE.def.label),
+        string.format(P.T_LOGS, LOG.total, PERF.logRate, G.internalErrors),
     }, "\n")
 end
+
+do
+    local page = UI.pages.PERFORMANCE
+    local tb = UI.toolbar(page)
+    tb.button(STR.BTN_PERF_COPY, function() UI.copyOrShow(STR.PERF_TITLE, UI.perfText()) end, TH.cyan, 124)
+    tb.button(STR.BTN_PERF_NOTES, function() UI.detail(STR.NOTES_TITLE, STR.PERF_NOTES) end, TH.violet, 150)
+    UI.lists.PERFORMANCE = UI.list(page, LIST_TOP)
+end
+
 local function renderPerf()
+    local P = STR.PERF
     local items = {}
-    local function row(t, s, c) items[#items + 1] = {title = t, sub = s, color = c} end
+    local function row(t, s, c, tap) items[#items + 1] = {title = t, sub = s, color = c, onTap = tap} end
     local fpsHex = PERF.fps >= 50 and HEX.ok or (PERF.fps >= 30 and HEX.warn or HEX.bad)
-    row(rich(fpsHex, string.format("FPS %.0f", PERF.fps)) .. "  " .. rich(HEX.dim, "frame " .. fmt(PERF.frameAvg * 1000, "%.1f", " ms") .. " · máx " .. fmt((PERF.lastFrameMax or 0) * 1000, "%.0f", " ms")),
-        spark(PERF.hist) .. "  (últimos 30 s · cliente)", Color3.fromHex and Color3.fromHex(fpsHex) or TH.ok)
-    row(rich(HEX.cyan, "Ping " .. fmt(PERF.ping, "%.0f", " ms")), U.esc(PERF.pingSrc ~= "" and (PERF.pingSrc .. " · aproximado") or "API no disponible en este juego/ejecutor"), TH.cyan)
-    row(rich(HEX.violet, "Memoria " .. fmt(PERF.mem, "%.0f", " MB")), "scripts " .. fmt(PERF.memScript, "%.0f", " MB") .. " · montón Lua de este script " .. fmt(PERF.luaHeap, "%.1f", " MB"), TH.violet)
-    row(rich(HEX.blue, "Red ↓ " .. fmt(PERF.recv, "%.1f", " KB/s") .. "  ↑ " .. fmt(PERF.send, "%.1f", " KB/s")), "Física " .. fmt(PERF.physFps, "%.0f", " FPS") .. " · instancias " .. fmt(PERF.instCount, "%.0f"), TH.line)
-    row(rich(CONSOLE.errors > 0 and HEX.bad or HEX.ok, "Errores " .. CONSOLE.errors) .. "  " .. rich(HEX.warn, "Advertencias " .. CONSOLE.warnings),
-        "Consola del cliente (LogService). Toca para verlos en LOGS", TH.bad)
-    items[#items].onTap = function()
-        for i, c in ipairs(CATS) do if c == "Consola" then logState.cat = i end end
-        if logState.catBtn then logState.catBtn.Text = "Categoría: Consola" end
-        UI.logSearch("")
-    end
-    row(rich(HEX.text, "Objetos: " .. #REG.remotes .. " remotos · " .. #REG.tools .. " herramientas · " .. #REG.buttons .. " botones"),
-        "Registros " .. LOG.total .. " · " .. string.format("%.1f/s", PERF.logRate) .. " · spam no guardado " .. LOG.suppressed, TH.line)
-    row(rich(HEX.dim, "Monitor: " .. #G.conns .. " conexiones · cola " .. math.floor((REG.qTail - REG.qHead + 1) / 2) .. " (pico " .. math.floor(REG.qMax) .. ")"),
-        string.format("render %.2f ms · %.1f act./s · %d instancias procesadas por lotes (%.1f ms/frame)", PERF.renderMs, PERF.renderRate, REG.qProcessed, REG.qBudgetMs), TH.line)
-    row(rich(G.internalErrors > 0 and HEX.bad or HEX.ok, "Errores internos del monitor: " .. G.internalErrors),
-        G.internalErrors > 0 and U.esc(U.trunc(G.lastInternalError:gsub("\n", " "), 150)) or "Ninguno · toca para ver el historial con traceback", TH.line)
-    items[#items].onTap = function() UI.detail("Errores internos (últimos 30)", UI.errorsText()) end
-    row(rich(HEX.dim, "ⓘ Qué es aproximado y qué necesita Studio"), "Toca para ver cómo se mide cada valor", TH.line)
-    items[#items].onTap = function() UI.detail("Cómo se mide", PERF_NOTES) end
+    local graph = MODE.def.graph and (spark(PERF.hist) .. string.format(P.GRAPH, CONFIG.PERF_HISTORY)) or P.NO_GRAPH
+    row(rich(fpsHex, string.format(P.FPS, PERF.fps)) .. "  " .. rich(HEX.dim, string.format(P.FRAME, fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.0f", " ms"))),
+        graph, hexColor(fpsHex, TH.ok))
+    local pingHex = (PERF.ping and PERF.ping > CONFIG.PING_ALERT_MS) and HEX.bad or HEX.cyan
+    row(rich(pingHex, string.format(P.PING, fmt(PERF.ping, "%.0f", " ms"))), U.esc(PERF.pingSrc ~= "" and string.format(P.PING_SRC, PERF.pingSrc) or P.PING_NA), TH.cyan)
+    row(rich(HEX.violet, string.format(P.MEM, fmt(PERF.mem, "%.0f", " MB"))), string.format(P.MEM_SUB, fmt(PERF.memScript, "%.0f", " MB"), fmt(PERF.luaHeap, "%.1f", " MB")), TH.violet)
+    row(rich(HEX.blue, string.format(P.NET, fmt(PERF.recv, "%.1f", " KB/s"), fmt(PERF.send, "%.1f", " KB/s"))),
+        string.format(P.NET_SUB, fmt(PERF.physFps, "%.0f", " FPS"), fmt(PERF.instCount, "%.0f")), TH.line)
+    row(rich(FEED.stats and HEX.ok or HEX.dim, P.SERVER), U.esc(FEED.stats or P.SERVER_NONE), TH.ok)
+    row(rich(CONSOLE.errors > 0 and HEX.bad or HEX.ok, string.format(P.ERR, CONSOLE.errors)) .. "  " .. rich(HEX.warn, string.format(P.WARN, CONSOLE.warnings)),
+        P.CONSOLE_SUB, TH.bad, function()
+            for i, c in ipairs(CATS) do if c == "Consola" then logState.cat = i end end
+            if logState.catBtn then logState.catBtn.Text = string.format(STR.CAT_BTN, "Consola") end
+            UI.logSearch("")
+        end)
+    row(rich(HEX.text, string.format(P.OBJECTS, #REG.remotes, #REG.tools, #REG.buttons)),
+        string.format(P.OBJECTS_SUB, LOG.total, PERF.logRate, LOG.suppressed), TH.line)
+    row(rich(HEX.dim, string.format(P.MONITOR, #G.conns, REG.pending(), math.floor(REG.qMax))),
+        string.format(P.MONITOR_SUB, PERF.renderMs, PERF.renderRate, REG.qProcessed, CONFIG.QUEUE_BUDGET_MS, MODE.def.label), TH.line)
+    row(rich(G.internalErrors > 0 and HEX.bad or HEX.ok, string.format(P.INTERNAL, G.internalErrors)),
+        G.internalErrors > 0 and U.esc(U.trunc(U.oneLine(G.lastInternalError), 150)) or P.INTERNAL_NONE, TH.line,
+        function() UI.detail(string.format(STR.ERRORS_TITLE, CONFIG.MAX_ERRORS), UI.errorsText()) end)
+    row(rich(HEX.dim, P.INFO), P.INFO_SUB, TH.line, function() UI.detail(STR.NOTES_TITLE, STR.PERF_NOTES) end)
     UI.lists.PERFORMANCE.set(items)
 end
 
----------------------------------------------------------------- BUCLE DE REFRESCO
--- Un solo bucle, solo con el panel abierto, y solo re-dibuja lo que cambió.
+-------------------------------------------------------------------------------
+-- 11. BUCLE (un solo bucle de refresco) + ARRANQUE
+-------------------------------------------------------------------------------
 local RENDER = {MAIN = renderMain, REMOTES = renderRemotes, TOOLS = renderTools, BUTTONS = renderButtons, LOGS = renderLogs, PERFORMANCE = renderPerf}
-local lastSig, lastTime = {}, {}
+local LOOP = {lastSig = {}, lastTime = {}, renders = 0}
+
 local function signature(tab)
-    if tab == "REMOTES" then return REG.remoteVersion
-    elseif tab == "TOOLS" then return REG.toolVersion .. ":" .. #toolState.results .. ":" .. #WATCH.list
-    elseif tab == "BUTTONS" then return REG.buttonVersion
-    elseif tab == "LOGS" then return LOG.version end
-    return nil
+    local common = MODE.version .. ":" .. (FEED.version or 0)
+    if tab == "REMOTES" then return REG.remoteVersion .. ":" .. common
+    elseif tab == "TOOLS" then return REG.toolVersion .. ":" .. #toolState.results .. ":" .. #WATCH.list .. ":" .. common
+    elseif tab == "BUTTONS" then return REG.buttonVersion .. ":" .. common
+    elseif tab == "LOGS" then return LOG.version .. ":" .. common end
+    return nil -- MAIN y PERFORMANCE se refrescan por tiempo
 end
--- Decide si una pestaña necesita redibujarse (separado para que sea legible).
-local PERIOD = {MAIN = 1, PERFORMANCE = 1, BUTTONS = 2, REMOTES = 1.5, TOOLS = 1.5, LOGS = 1.5}
+
+-- ¿Hay que redibujar la pestaña?
 local function needsRender(tab, now)
     if UI.force then return true end
-    local age = now - (lastTime[tab] or 0)
-    local period = PERIOD[tab] or 1.5
+    local age = now - (LOOP.lastTime[tab] or 0)
+    local period = (CONFIG.REFRESH[tab] or 1.5) * (MODE.def.tickMul or 1)
     local sig = signature(tab)
-    if sig == nil then return age >= period end          -- pestañas de métricas: por tiempo
-    if sig ~= lastSig[tab] then return age >= 0.3 end      -- cambió algo: como mucho ~3 veces/s
-    return age >= period * 3                              -- refresco de seguridad (textos con hora)
+    if sig == nil then return age >= period end
+    if sig ~= LOOP.lastSig[tab] then return age >= CONFIG.REFRESH_ON_CHANGE * (MODE.def.tickMul or 1) end
+    return age >= period * CONFIG.REFRESH_SAFETY_MUL
 end
-local RENDER_RAN = 0
+
+-- ¿Hay que medir? Donde se muestra, o siempre si el modo vigila alertas.
+local function needsSample(now)
+    if not PERF.due(now) then return false end
+    if MODE.def.alertsOnly or MODE.def.silent then return true end
+    return UI.open and (UI.tab == "MAIN" or UI.tab == "PERFORMANCE")
+end
+
+local function updateFooter()
+    local left = MODE.captureLeft()
+    local modeTxt = MODE.def.label .. (left and (" " .. string.format(STR.CAPTURE_LEFT, left)) or "")
+    footer.Text = string.format(STR.FOOTER, LOG.paused and HEX.warn or HEX.ok, LOG.paused and STR.PAUSED or STR.LIVE,
+        modeTxt, FEED.label(), #REG.remotes, LOG.total, LOG.suppressed > 0 and string.format(STR.SPAM_SUFFIX, LOG.suppressed) or "", PERF.fps)
+end
+
+local function renderTab(tab, now)
+    UI.force = false
+    local t0 = os.clock()
+    U.try("render " .. tab, RENDER[tab])
+    PERF.renderMs = (os.clock() - t0) * 1000
+    PERF.renderWinCount = PERF.renderWinCount + 1
+    LOOP.renders = LOOP.renders + 1
+    LOOP.lastSig[tab], LOOP.lastTime[tab] = signature(tab), now
+end
+
+local function tick()
+    local now = os.clock()
+    RATE.flush()                 -- avisos de spam aunque el spam haya parado
+    MODE.tickCapture()
+    CFG.flush(false)
+    if MODE.captureFinished then
+        MODE.captureFinished = false
+        if UI.open then UI.toast(string.format(STR.CAPTURE_DONE, MODE.lastCapture.data.total, MODE.lastCapture.data.dur)) end
+        UI.force = true
+    end
+    if now - PERF.renderWin >= 2 then
+        PERF.renderRate = PERF.renderWinCount / (now - PERF.renderWin)
+        PERF.renderWin, PERF.renderWinCount = now, 0
+    end
+    if needsSample(now) then PERF.sample() end
+    local drawing = MODE.drawAllowed()
+    fabDot.BackgroundColor3 = (MODE.def.silent and MODE.alertPending) and TH.bad or (LOG.paused and TH.warn or TH.ok)
+    if not drawing then return end  -- Silencioso: no se dibuja nada hasta una alerta
+    UI.refreshControls(UI.controlLabels())
+    if not UI.open or UI.collapsed then return end
+    updateFooter()
+    local tab = UI.tab
+    if needsRender(tab, now) then renderTab(tab, now) end
+end
+
+---------------- Arranque
+local function onCharacter(char)
+    if not char then return end
+    LOG.add("Cambio", STR.MSG.CHAR, STR.DIR.REPLICATED, "", nil, string.format(STR.MSG.CHAR_SPAWN, U.path(char)))
+    REG.watchAttributes(char, STR.MSG.ATTR_CHAR)
+    task.spawn(function()
+        local hum = char:WaitForChild("Humanoid", 10)
+        if hum and G.alive then
+            U.conn(hum.Died, function() LOG.add("Cambio", STR.MSG.CHAR, STR.DIR.REPLICATED, "", nil, STR.MSG.CHAR_DIED) end, "murió")
+        end
+    end)
+end
+
+-- Recarga tras teletransporte: solo si se confirmó ESTA URL (ver MAIN).
+if CAP.queue_on_teleport then
+    U.conn(LP.OnTeleport, function(state)
+        if teleportArmed() and tostring(state):find("Started") then
+            CFG.flush(true)
+            pcall(CAP.queue_on_teleport, 'loadstring(game:HttpGet("' .. CONFIG.RELOAD_URL .. '"))()')
+        end
+    end, "teleport")
+end
+
+REG.watchAttributes(LP, STR.MSG.ATTR_PLAYER)
+onCharacter(LP.Character)
+U.conn(LP.CharacterAdded, onCharacter, "personaje")
+G.UI, G.REG, G.LOG, G.PERF, G.CAP, G.FEED, G.MODE, G.CFG, G.CONFIG, G.STR = UI, REG, LOG, PERF, CAP, FEED, MODE, CFG, CONFIG, STR
+UI.setTab(UI.pages[CFG.get("tab", "MAIN")] and CFG.get("tab", "MAIN") or "MAIN")
+LOG.add("Sistema", "GOY Diagnostics", "", "", nil, string.format(STR.MSG.START, CONFIG.VERSION, CAP.executor))
+task.spawn(REG.initialScan)
 task.spawn(function()
     while G.alive do
-        task.wait(0.35)
-        if not G.alive then break end
-        local now = os.clock()
-        if now - PERF.renderWin >= 2 then
-            PERF.renderRate = PERF.renderWinCount / (now - PERF.renderWin)
-            PERF.renderWin, PERF.renderWinCount = now, 0
-        end
-        footer.Text = string.format('<font color="%s">%s</font> · remotos %d · registros %d%s · FPS %.0f',
-            LOG.paused and HEX.warn or HEX.ok, LOG.paused and "EN PAUSA" or "EN VIVO", #REG.remotes, LOG.total,
-            LOG.suppressed > 0 and (" (spam " .. LOG.suppressed .. ")") or "", PERF.fps)
-        CFG.flush(false)
-        if UI.open then
-            local tab = UI.tab
-            -- Las métricas solo se muestrean donde se muestran.
-            if tab == "MAIN" or tab == "PERFORMANCE" then PERF.sample() end
-            if needsRender(tab, now) then
-                UI.force = false
-                local t0 = os.clock()
-                U.try("render " .. tab, RENDER[tab])
-                PERF.renderMs = (os.clock() - t0) * 1000
-                PERF.renderWinCount = PERF.renderWinCount + 1
-                RENDER_RAN = RENDER_RAN + 1
-                lastSig[tab], lastTime[tab] = signature(tab), now
-            end
-        end
+        task.wait(CONFIG.TICK)
+        if G.alive then U.try("bucle", tick) end
     end
 end)
 
----------------------------------------------------------------- LIMPIEZA
+-------------------------------------------------------------------------------
+-- 12. LIMPIEZA
+-------------------------------------------------------------------------------
 function G.destroy()
     if not G.alive then return end
     G.alive = false
@@ -1952,61 +2699,63 @@ function G.destroy()
     pcall(function() screen:Destroy() end)
     if ENV.GOY_DIAG == G then ENV.GOY_DIAG = nil end
 end
-U.conn(screen.AncestryChanged, function() if not screen.Parent then G.destroy() end end)
+U.conn(screen.AncestryChanged, function() if not screen.Parent then G.destroy() end end, "GUI eliminada")
 
----------------------------------------------------------------- RECARGA TRAS TELETRANSPORTE (opcional, apagada por defecto)
-local RAW_URL = "https://raw.githubusercontent.com/eduardomorfin58-ux/u/main/GOY_Diagnostics.lua"
-if CAP.queue_on_teleport then
-    U.conn(LP.OnTeleport, function(state)
-        if CFG.get("reloadOnTeleport", false) and tostring(state):find("Started") then
-            CFG.flush(true)
-            pcall(CAP.queue_on_teleport, 'loadstring(game:HttpGet("' .. RAW_URL .. '"))()')
-        end
-    end, "teleport")
-end
-
----------------------------------------------------------------- MINIMIZAR
-do
-    local collapsed = false
-    U.conn(minBtn.Activated, function()
-        collapsed = not collapsed
-        tabBar.Visible, body.Visible, footer.Visible, grip.Visible = not collapsed, not collapsed, not collapsed, not collapsed
-        panel.Size = collapsed and UDim2.fromOffset(PW, 52) or UDim2.fromOffset(PW, PH)
-    end)
-end
-
----------------------------------------------------------------- SCRIPT DE STUDIO (generado desde GOY_Diagnostics_Studio_Server.lua por build.py)
+-------------------------------------------------------------------------------
+-- 13. STUDIO — generado por build.py desde GOY_Diagnostics_Studio_Server.lua (no editar aquí)
+-------------------------------------------------------------------------------
 STUDIO_SCRIPT = [==[
 --[[
- GOY DIAGNOSTICS · SCRIPT DE SERVIDOR v1.1 (solo para TU propio juego en Roblox Studio)
+================================================================================
+ GOY DIAGNOSTICS · SCRIPT DE SERVIDOR v1.2 (solo para TU propio juego)
  Dónde va: ServerScriptService → Script (no LocalScript).
- Qué hace:
-   · Escucha OnServerEvent de todos tus RemoteEvent / UnreliableRemoteEvent, en
-     cualquier contenedor (agrega un oyente extra, no cambia la lógica del juego).
-   · Registra jugador, remoto, argumentos, tipos y frecuencia por jugador y por
-     remoto (clave = la instancia, no el nombre); avisa si se supera MAX_PER_SECOND.
-   · Marca cada evento con debug.profilebegin/profileend (siempre balanceados):
-     aparece con nombre propio en el MicroProfiler (Ctrl+F6) y en el Script Profiler.
+--------------------------------------------------------------------------------
+ QUÉ HACE
+   · Escucha OnServerEvent de todos tus RemoteEvent / UnreliableRemoteEvent en
+     cualquier contenedor (añade un oyente; no cambia la lógica del juego).
    · RemoteFunction: usa _G.GOYDiag.wrapInvoke(remote, tuFuncion) en lugar de
-     remote.OnServerInvoke = tuFuncion, y quedará registrado igual.
-   · Envía lo registrado al panel GOY del cliente por "GOY_DiagFeed" solo a
-     jugadores autorizados (ver AUTORIZACIÓN). A nadie más.
- AUTORIZACIÓN (cualquiera de estas):
-   · En Roblox Studio (RunService:IsStudio()) → todos los jugadores de la prueba.
+     remote.OnServerInvoke = tuFuncion y quedará registrado igual.
+   · Registra jugador, userId, remoto, argumentos y tipos; avisa del spam por
+     jugador y remoto (clave = instancia). Marca cada evento en el MicroProfiler
+     (debug.profilebegin/profileend siempre balanceados).
+   · Envía todo al panel GOY del cliente por GOY_DiagFeed, SOLO a espectadores
+     autorizados, con un mensaje estructurado (protocolo 2).
+   · Cada espectador elige qué ver por GOY_DiagMode: "all" (todos), "me" (solo
+     sus propios eventos) o un UserId presente. El filtro se aplica AQUÍ, antes
+     de enviar: no se gasta red en lo que no ve.
+   · Presupuesto por espectador y por emisor: el spam de un jugador no puede
+     gastar el cupo de los demás, y tus propios eventos tienen cupo reservado.
+--------------------------------------------------------------------------------
+ AUTORIZACIÓN (se resuelve en PlayerAdded, nunca mientras se envía)
+   · En Roblox Studio (RunService:IsStudio()) → todos los jugadores de prueba.
    · El dueño del juego (game.CreatorId si el juego es de un usuario).
-   · Si el juego es de un grupo: rango >= GROUP_MIN_RANK en ese grupo.
-   · Los UserId que pongas en AUTHORIZED.
- Cambios v1.1: profileend garantizado, limitador por instancia, engancha todo el
- juego, autorización por Studio/dueño/grupo con aviso, métricas extra.
+   · Juego de grupo: rango >= GROUP_MIN_RANK (si GetRankInGroup falla, se
+     reintenta; los fallos no se guardan).
+   · Los UserId de AUTHORIZED.
+--------------------------------------------------------------------------------
+ CAMBIOS v1.2: presupuesto por espectador/emisor · feed estructurado (tipo,
+ remoto, jugador, userId, args, tipos) · modos all/me/UserId validados en el
+ servidor (máx. 2 peticiones/s) · autorización en PlayerAdded sin cachear fallos
+ · aviso "Dropped" con lo descartado por espectador · ack de modo.
+================================================================================
 ]]
 
 local CONFIG = {
-    AUTHORIZED = {},          -- ej. {12345678}: UserIds extra que reciben el feed
-    GROUP_MIN_RANK = 254,     -- si el juego es de un grupo: rango mínimo autorizado
-    PRINT = true,             -- imprime en la consola del servidor (F9 → Server)
-    MAX_PER_SECOND = 20,      -- aviso de spam por jugador y remoto
-    FEED_PER_SECOND = 20,     -- máximo de mensajes por segundo hacia el panel
-    STATS_EVERY = 5,          -- segundos entre envíos de métricas del servidor
+    AUTHORIZED = {},            -- UserIds extra que reciben el feed, ej. {12345678}
+    GROUP_MIN_RANK = 254,       -- juegos de grupo: rango mínimo autorizado
+    AUTH_RETRIES = 3,           -- reintentos si GetRankInGroup falla
+    AUTH_RETRY_SEC = 10,
+    PRINT = true,               -- imprime en la consola del servidor (F9 → Server)
+    SPAM_PER_SECOND = 20,       -- aviso de spam por jugador y remoto
+    VIEWER_PER_SECOND = 120,    -- mensajes/s máximos hacia cada espectador
+    SENDER_PER_SECOND = 30,     -- mensajes/s de un mismo emisor hacia cada espectador
+    MODE_REQ_PER_SECOND = 2,    -- peticiones de modo por espectador
+    STATS_EVERY = 5,            -- s entre métricas del servidor
+    DROPPED_EVERY = 1,          -- s entre avisos de mensajes descartados
+    ARGS_MAX = 10, STR_MAX = 100, TABLE_ITEMS = 10, TABLE_DEPTH = 2,
+    FEED_REMOTE = "GOY_DiagFeed",
+    MODE_REMOTE = "GOY_DiagMode",
+    PROTOCOL = 2,
 }
 
 local Players = game:GetService("Players")
@@ -2015,51 +2764,77 @@ local RunService = game:GetService("RunService")
 local Stats = game:GetService("Stats")
 local DataStoreService = game:GetService("DataStoreService")
 
+local function getRemote(name)
+    local r = RS:FindFirstChild(name)
+    if not r then
+        r = Instance.new("RemoteEvent")
+        r.Name = name
+        r.Parent = RS
+    end
+    return r
+end
+local feed = getRemote(CONFIG.FEED_REMOTE)
+local modeRemote = getRemote(CONFIG.MODE_REMOTE)
+feed.OnServerEvent:Connect(function() end) -- el cliente no puede enviar nada por el feed
+
+---------------------------------------------------------------- AUTORIZACIÓN
 local extra = {}
 for _, id in ipairs(CONFIG.AUTHORIZED) do extra[id] = true end
 
-local authCache = {}
-local function isAuthorized(p)
-    if authCache[p] ~= nil then return authCache[p] end
-    local ok = false
-    if RunService:IsStudio() or extra[p.UserId] then
-        ok = true
-    elseif game.CreatorType == Enum.CreatorType.User and p.UserId == game.CreatorId then
-        ok = true
-    elseif game.CreatorType == Enum.CreatorType.Group then
-        local s, rank = pcall(function() return p:GetRankInGroup(game.CreatorId) end)
-        ok = s and rank >= CONFIG.GROUP_MIN_RANK
+local viewers = {} -- [player] = {mode, budget, senders, dropped, modeReq}
+
+local function newViewer()
+    return {mode = "all", winStart = 0, sent = 0, senders = {}, dropped = 0, modeWin = 0, modeCount = 0}
+end
+
+-- Devuelve true, false o nil (nil = no se pudo saber; se reintenta).
+local function checkAuthorized(p)
+    if RunService:IsStudio() or extra[p.UserId] then return true end
+    if game.CreatorType == Enum.CreatorType.User then return p.UserId == game.CreatorId end
+    if game.CreatorType == Enum.CreatorType.Group then
+        local ok, rank = pcall(function() return p:GetRankInGroup(game.CreatorId) end)
+        if not ok then return nil end
+        return rank >= CONFIG.GROUP_MIN_RANK
     end
-    authCache[p] = ok
-    if ok then print(("[GOY DIAG] Feed autorizado para %s"):format(p.Name)) end
-    return ok
+    return false
 end
-Players.PlayerRemoving:Connect(function(p) authCache[p] = nil end)
 
-local mode = RunService:IsStudio() and "Studio (todos los jugadores de prueba)"
+local function resolveAuth(p)
+    for _ = 1, CONFIG.AUTH_RETRIES + 1 do
+        if not p.Parent then return end
+        local ok = checkAuthorized(p)
+        if ok == true then
+            viewers[p] = viewers[p] or newViewer()
+            print(("[GOY DIAG] Feed autorizado para %s"):format(p.Name))
+            return
+        elseif ok == false then
+            return
+        end
+        task.wait(CONFIG.AUTH_RETRY_SEC) -- fallo de red: no se guarda, se reintenta
+    end
+    warn(("[GOY DIAG] No se pudo comprobar el rango de %s; sin feed"):format(p.Name))
+end
+
+Players.PlayerAdded:Connect(function(p) task.spawn(resolveAuth, p) end)
+for _, p in ipairs(Players:GetPlayers()) do task.spawn(resolveAuth, p) end
+Players.PlayerRemoving:Connect(function(p) viewers[p] = nil end)
+
+local modeText = RunService:IsStudio() and "Studio (todos los jugadores de prueba)"
     or (game.CreatorType == Enum.CreatorType.Group and ("grupo, rango >= " .. CONFIG.GROUP_MIN_RANK) or "dueño del juego")
-print("[GOY DIAG] Autorización del feed: " .. mode .. (next(extra) and " + AUTHORIZED" or ""))
+print("[GOY DIAG] Autorización del feed: " .. modeText .. (next(extra) and " + AUTHORIZED" or ""))
 
-local feed = RS:FindFirstChild("GOY_DiagFeed")
-if not feed then
-    feed = Instance.new("RemoteEvent")
-    feed.Name = "GOY_DiagFeed"
-    feed.Parent = RS
-end
--- El cliente nunca puede usar el feed para enviar nada.
-feed.OnServerEvent:Connect(function() end)
-
+---------------------------------------------------------------- SERIALIZACIÓN
 local function ser(v, depth)
     depth = depth or 0
     local t = typeof(v)
-    if t == "string" then return string.format("%q", #v > 100 and (v:sub(1, 100) .. "…") or v) end
+    if t == "string" then return string.format("%q", #v > CONFIG.STR_MAX and (v:sub(1, CONFIG.STR_MAX) .. "…") or v) end
     if t == "Instance" then return v.ClassName .. "(" .. v:GetFullName() .. ")" end
     if t == "table" then
-        if depth >= 2 then return "{…}" end
+        if depth >= CONFIG.TABLE_DEPTH then return "{…}" end
         local parts, n = {}, 0
         for k, x in pairs(v) do
             n += 1
-            if n > 10 then table.insert(parts, "…") break end
+            if n > CONFIG.TABLE_ITEMS then table.insert(parts, "…") break end
             table.insert(parts, tostring(k) .. "=" .. ser(x, depth + 1))
         end
         return "{" .. table.concat(parts, ", ") .. "}"
@@ -2070,69 +2845,135 @@ end
 local function describe(...)
     local n = select("#", ...)
     local args, types = {}, {}
-    for i = 1, math.min(n, 10) do
+    for i = 1, math.min(n, CONFIG.ARGS_MAX) do
         local v = select(i, ...)
         table.insert(types, typeof(v))
         table.insert(args, i .. ": " .. ser(v))
     end
-    return table.concat(args, " | "), table.concat(types, ", ")
+    if n == 0 then args[1] = "(sin argumentos)" end
+    return table.concat(args, "\n"), table.concat(types, ", ")
 end
 
-local sentThisSecond, secondStart = 0, os.clock()
-local function sendFeed(...)
+---------------------------------------------------------------- ENVÍO FILTRADO
+-- ¿Quiere este espectador ver eventos de `sender`?
+local function wants(v, viewerPlayer, sender)
+    if sender == nil then return true end -- métricas y avisos generales
+    if v.mode == "all" then return true end
+    if v.mode == "me" then return sender == viewerPlayer end
+    return sender.UserId == v.mode
+end
+
+-- Presupuesto: por emisor (para todos) y total por espectador; los eventos
+-- del propio espectador no cuentan contra el total, así el spam ajeno no los tapa.
+local function allow(v, viewerPlayer, sender)
     local now = os.clock()
-    if now - secondStart >= 1 then sentThisSecond, secondStart = 0, now end
-    if sentThisSecond >= CONFIG.FEED_PER_SECOND then return end
-    sentThisSecond += 1
-    for _, p in ipairs(Players:GetPlayers()) do
-        if isAuthorized(p) then feed:FireClient(p, ...) end
+    if now - v.winStart >= 1 then v.winStart, v.sent, v.senders = now, 0, {} end
+    if sender then
+        local key = sender.UserId
+        local c = (v.senders[key] or 0) + 1
+        if c > CONFIG.SENDER_PER_SECOND then return false end
+        v.senders[key] = c
+        if sender == viewerPlayer then return true end
+    end
+    if v.sent >= CONFIG.VIEWER_PER_SECOND then return false end
+    v.sent += 1
+    return true
+end
+
+local function deliver(msg, sender)
+    msg.v = CONFIG.PROTOCOL
+    for viewerPlayer, v in pairs(viewers) do
+        if viewerPlayer.Parent and wants(v, viewerPlayer, sender) then
+            if allow(v, viewerPlayer, sender) then
+                feed:FireClient(viewerPlayer, msg)
+            else
+                v.dropped += 1
+            end
+        end
     end
 end
 
-local rate = {} -- rate[player][remoteInstance] = {count, start}
-local function overLimit(player, remote)
-    local byRemote = rate[player]
-    if not byRemote then byRemote = setmetatable({}, {__mode = "k"}); rate[player] = byRemote end
-    local r = byRemote[remote]
+-- Avisa a cada espectador cuántos mensajes se descartaron.
+task.spawn(function()
+    while true do
+        task.wait(CONFIG.DROPPED_EVERY)
+        for viewerPlayer, v in pairs(viewers) do
+            if v.dropped > 0 and viewerPlayer.Parent then
+                feed:FireClient(viewerPlayer, {v = CONFIG.PROTOCOL, kind = "Dropped", count = v.dropped})
+                v.dropped = 0
+            end
+        end
+    end
+end)
+
+---------------------------------------------------------------- MODOS (GOY_DiagMode)
+local function validMode(m)
+    if m == "all" or m == "me" then return m end
+    local id = tonumber(m)
+    if id and Players:GetPlayerByUserId(id) then return id end
+    return nil
+end
+
+modeRemote.OnServerEvent:Connect(function(player, req)
+    local v = viewers[player]
+    if not v then return end -- no autorizado: se ignora
     local now = os.clock()
+    if now - v.modeWin >= 1 then v.modeWin, v.modeCount = now, 0 end
+    v.modeCount += 1
+    if v.modeCount > CONFIG.MODE_REQ_PER_SECOND then return end
+    local raw = type(req) == "table" and req.mode or req
+    local mode = validMode(raw)
+    if mode then v.mode = mode end
+    feed:FireClient(player, {v = CONFIG.PROTOCOL, kind = "Mode", mode = v.mode, ok = mode ~= nil,
+        reason = mode and nil or "valor no válido (usa all, me o un UserId presente)"})
+end)
+
+---------------------------------------------------------------- REGISTRO DE EVENTOS
+local spam = {} -- spam[player][remoteInstance] = {count, start}
+local function overLimit(player, remote)
+    local byRemote = spam[player]
+    if not byRemote then byRemote = setmetatable({}, {__mode = "k"}); spam[player] = byRemote end
+    local now = os.clock()
+    local r = byRemote[remote]
     if not r or now - r.start >= 1 then r = {count = 0, start = now}; byRemote[remote] = r end
     r.count += 1
-    return r.count == CONFIG.MAX_PER_SECOND + 1
+    return r.count == CONFIG.SPAM_PER_SECOND + 1
 end
-Players.PlayerRemoving:Connect(function(p) rate[p] = nil end)
+Players.PlayerRemoving:Connect(function(p) spam[p] = nil end)
 
 local function record(kind, remote, player, ...)
     debug.profilebegin("GOY " .. kind .. " " .. remote.Name)
     local ok, err = pcall(function(...)
         local args, types = describe(...)
+        local path = remote:GetFullName()
         if CONFIG.PRINT then
-            print(("[GOY DIAG] %s %s ← %s | %s | tipos: %s"):format(kind, remote:GetFullName(), player.Name, args, types))
+            print(("[GOY DIAG] %s %s ← %s (%d) | %s | tipos: %s"):format(kind, path, player.Name, player.UserId, args:gsub("\n", " | "), types))
         end
-        sendFeed(kind, remote:GetFullName(), player.Name, args, types)
+        deliver({kind = kind, remote = path, player = player.Name, userId = player.UserId, args = args, types = types}, player)
         if overLimit(player, remote) then
-            warn(("[GOY DIAG] %s supera %d/s en %s"):format(player.Name, CONFIG.MAX_PER_SECOND, remote:GetFullName()))
-            sendFeed("Spam", remote:GetFullName(), player.Name, ">" .. CONFIG.MAX_PER_SECOND .. "/s", "")
+            warn(("[GOY DIAG] %s supera %d/s en %s"):format(player.Name, CONFIG.SPAM_PER_SECOND, path))
+            deliver({kind = "Spam", remote = path, player = player.Name, userId = player.UserId,
+                args = ">" .. CONFIG.SPAM_PER_SECOND .. "/s", types = ""}, player)
         end
     end, ...)
-    debug.profileend() -- siempre se cierra, aunque describe falle
+    debug.profileend() -- siempre se cierra, aunque falle el registro
     if not ok then warn("[GOY DIAG] error al registrar: " .. tostring(err)) end
 end
 
 local hooked = setmetatable({}, {__mode = "k"})
 local function hook(obj)
-    if hooked[obj] or obj == feed then return end
+    if hooked[obj] or obj == feed or obj == modeRemote then return end
     local ok, isRemote = pcall(function() return obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") end)
     if ok and isRemote then
         hooked[obj] = true
         obj.OnServerEvent:Connect(function(player, ...) record("OnServerEvent", obj, player, ...) end)
     end
 end
--- Todo el juego: cualquier contenedor donde tengas remotos.
 for _, d in ipairs(game:GetDescendants()) do hook(d) end
 game.DescendantAdded:Connect(hook)
 
--- RemoteFunction: envuelve TU función para registrarla.
 _G.GOYDiag = {
+    -- Envuelve TU función de RemoteFunction para registrarla (no toca la de nadie más).
     wrapInvoke = function(remote, handler)
         remote.OnServerInvoke = function(player, ...)
             record("OnServerInvoke", remote, player, ...)
@@ -2141,7 +2982,7 @@ _G.GOYDiag = {
     end,
 }
 
--- Métricas del servidor (consola del servidor + feed autorizado).
+---------------------------------------------------------------- MÉTRICAS DEL SERVIDOR
 task.spawn(function()
     local frames, start = 0, os.clock()
     RunService.Heartbeat:Connect(function() frames += 1 end)
@@ -2150,8 +2991,8 @@ task.spawn(function()
         local now = os.clock()
         local hz = frames / (now - start)
         frames, start = 0, now
-        local mem = Stats:GetTotalMemoryUsageMb()
-        local parts = {("Heartbeat %.1f Hz"):format(hz), ("memoria %.0f MB"):format(mem), ("jugadores %d"):format(#Players:GetPlayers())}
+        local parts = {("Heartbeat %.1f Hz"):format(hz), ("memoria %.0f MB"):format(Stats:GetTotalMemoryUsageMb()),
+            ("jugadores %d"):format(#Players:GetPlayers())}
         pcall(function() table.insert(parts, ("scripts %.0f MB"):format(Stats:GetMemoryUsageMbForTag(Enum.DeveloperMemoryTag.Script))) end)
         pcall(function() table.insert(parts, ("red ↓%.1f ↑%.1f KB/s"):format(Stats.DataReceiveKbps, Stats.DataSendKbps)) end)
         pcall(function()
@@ -2161,29 +3002,9 @@ task.spawn(function()
         end)
         local msg = table.concat(parts, " · ")
         if CONFIG.PRINT then print("[GOY DIAG] " .. msg) end
-        sendFeed("ServerStats", msg)
+        deliver({kind = "ServerStats", msg = msg}, nil)
     end
 end)
 
-print("[GOY DIAG] Instrumentación de servidor v1.1 activa.")
+print("[GOY DIAG] Instrumentación de servidor v1.2 activa.")
 ]==]
-
----------------------------------------------------------------- ARRANQUE
-watchAttributes(LP, "Jugador")
-local function onCharacter(char)
-    if not char then return end
-    LOG.add("Cambio", "Personaje", "Replicado", "", nil, "Tu personaje apareció: " .. U.path(char))
-    watchAttributes(char, "Personaje")
-    task.spawn(function()
-        local hum = char:WaitForChild("Humanoid", 10)
-        if hum and G.alive then
-            U.conn(hum.Died, function() LOG.add("Cambio", "Personaje", "Replicado", "", nil, "Tu Humanoid murió") end)
-        end
-    end)
-end
-onCharacter(LP.Character)
-U.conn(LP.CharacterAdded, onCharacter)
-G.UI, G.REG, G.LOG, G.PERF, G.CAP = UI, REG, LOG, PERF, CAP -- acceso de solo lectura para depurar
-UI.setTab(UI.pages[CFG.get("tab", "MAIN")] and CFG.get("tab", "MAIN") or "MAIN")
-LOG.add("Sistema", "GOY Diagnostics", "", "", nil, "Iniciado · ejecutor " .. CAP.executor .. " · solo lectura")
-task.spawn(initialScan)
