@@ -1,6 +1,6 @@
 --[[
 ================================================================================
- GOY DIAGNOSTICS v1.0  ·  Advanced Remote & Server Diagnostics (solo lectura)
+ GOY DIAGNOSTICS v1.1  ·  Advanced Remote & Server Diagnostics (solo lectura)
  Cliente Roblox · optimizado para iPhone + Delta
 --------------------------------------------------------------------------------
  QUÉ HACE (todo desde el cliente, sin tocar el juego):
@@ -24,6 +24,16 @@
    · No lee código del servidor ni eventos internos del servidor.
    · Para eso: script de Studio (pestaña MAIN → "Copiar script de Studio"),
      solo para TU propio juego.
+--------------------------------------------------------------------------------
+ CAMBIOS
+ v1.1 · Valores sin duplicados (registro débil, se descuentan al eliminarse) ·
+        historial de errores internos con traceback · limitadores con nombre ·
+        DescendantAdded en cola procesada por lotes (presupuesto de ms por frame) ·
+        lista virtual (solo se dibujan las filas visibles) · métricas solo en
+        MAIN/PERFORMANCE · botones táctiles de 44 px · safe area · panel limitado a
+        la pantalla, redimensionable, escala de interfaz · configuración guardada ·
+        recarga opcional tras teletransporte · script de Studio corregido.
+ v1.0 · Primera versión.
 ================================================================================
 ]]
 
@@ -32,7 +42,7 @@ if type(ENV.GOY_DIAG) == "table" and type(ENV.GOY_DIAG.destroy) == "function" th
     pcall(ENV.GOY_DIAG.destroy)
 end
 
-local G = {alive = true, conns = {}, internalErrors = 0, lastInternalError = ""}
+local G = {alive = true, conns = {}, internalErrors = 0, lastInternalError = "", errors = {}, VERSION = "1.1"}
 ENV.GOY_DIAG = G
 
 local function svc(name)
@@ -69,6 +79,9 @@ do
     end
     CAP.setclipboard = fn("setclipboard") or fn("toclipboard") or fn("set_clipboard")
     CAP.writefile = fn("writefile")
+    CAP.readfile = fn("readfile")
+    CAP.isfile = fn("isfile")
+    CAP.queue_on_teleport = fn("queue_on_teleport") or fn("queueonteleport")
     CAP.makefolder = fn("makefolder")
     CAP.isfolder = fn("isfolder")
     CAP.gethui = fn("gethui")
@@ -86,16 +99,35 @@ end
 local U = {}
 local unpackf = table.unpack or unpack
 
-function U.conn(signal, fn)
+-- Historial de errores internos (máx. 30) con traceback.
+function U.err(where, err)
+    G.internalErrors = G.internalErrors + 1
+    G.lastInternalError = tostring(err)
+    table.insert(G.errors, 1, {t = os.clock(), where = where or "?", msg = tostring(err)})
+    if #G.errors > 30 then table.remove(G.errors) end
+    if G.onInternalError then pcall(G.onInternalError, where, err) end
+end
+
+local function traceback(err)
+    local tb = ""
+    pcall(function() tb = debug.traceback(tostring(err), 2) end)
+    return tb ~= "" and tb or tostring(err)
+end
+
+function U.try(where, fn, ...)
+    local args = table.pack and table.pack(...) or {n = select("#", ...), ...}
+    local ok, err = xpcall(function() return fn(unpackf(args, 1, args.n)) end, traceback)
+    if not ok then U.err(where, err) end
+    return ok
+end
+
+function U.conn(signal, fn, where)
     if not signal then return nil end
+    where = where or "conexión"
     local ok, c = pcall(function()
         return signal:Connect(function(...)
             if not G.alive then return end
-            local ok2, err = pcall(fn, ...)
-            if not ok2 then
-                G.internalErrors = G.internalErrors + 1
-                G.lastInternalError = tostring(err)
-            end
+            U.try(where, fn, ...)
         end)
     end)
     if ok and c then
@@ -282,11 +314,11 @@ function LOG.format(e)
 end
 
 -- Limitador por fuente: máximo 12 registros/s por objeto; el resto solo se cuenta.
-function U.rateOk(entry)
+function U.rateOk(entry, name)
     local now = os.clock()
     if not entry.winStart or now - entry.winStart >= 1 then
         if entry.winSupp and entry.winSupp > 0 then
-            LOG.add("Sistema", entry.name or "?", "", "", nil,
+            LOG.add("Sistema", "Límite: " .. tostring(name or entry.name or entry.rateName or "fuente"), "", "", nil,
                 entry.winSupp .. " eventos más en 1 s no se guardaron en el registro (spam), sí se contaron")
         end
         entry.winStart, entry.winCount, entry.winSupp = now, 0, 0
@@ -306,7 +338,8 @@ local REG = {
     tools = {}, toolByInst = setmetatable({}, {__mode = "k"}), toolVersion = 0,
     buttons = {}, buttonByInst = setmetatable({}, {__mode = "k"}), buttonVersion = 0,
     containers = {}, watched = {}, scanDone = false, scanned = 0,
-    valueConns = 0, instAdded = 0, instRemoved = 0, logWorkspaceInstances = false,
+    values = 0, valueByInst = setmetatable({}, {__mode = "k"}), MAX_VALUES = 250,
+    queue = {}, qHead = 1, qTail = 0, qMax = 0, qBudgetMs = 1.5, qProcessed = 0, instAdded = 0, instRemoved = 0, logWorkspaceInstances = false,
 }
 local REMOTE_CLASSES = {RemoteEvent = true, UnreliableRemoteEvent = true, RemoteFunction = true,
     BindableEvent = true, BindableFunction = true}
@@ -495,12 +528,13 @@ end
 
 -- Valores de TU jugador (leaderstats, etc.): cambios visibles.
 local function addValue(inst)
-    if REG.valueConns >= 250 then return end
-    REG.valueConns = REG.valueConns + 1
+    if REG.valueByInst[inst] or REG.values >= REG.MAX_VALUES then return end
     local last = nil
     pcall(function() last = inst.Value end)
     local entry = {name = inst.Name}
-    U.conn(inst.Changed, function()
+    REG.valueByInst[inst] = entry
+    REG.values = REG.values + 1
+    entry.conn = U.conn(inst.Changed, function()
         if not U.rateOk(entry) then return end
         local newv = nil
         pcall(function() newv = inst.Value end)
@@ -508,7 +542,15 @@ local function addValue(inst)
         last = newv
         LOG.add("Valor", inst.Name, "Servidor → Cliente (replicado)", before .. "  →  " .. U.ser(newv),
             {U.typeOf(newv)}, U.path(inst))
-    end)
+    end, "valor")
+end
+
+local function removeValue(inst)
+    local e = REG.valueByInst[inst]
+    if not e then return end
+    U.disc(e.conn)
+    REG.valueByInst[inst] = nil
+    REG.values = math.max(0, REG.values - 1)
 end
 
 local function classify(inst, rootName, initial)
@@ -534,19 +576,17 @@ local function watchContainer(root, rootName)
     local c = {name = rootName, inst = root, count = 0, added = 0, removed = 0}
     REG.containers[#REG.containers + 1] = c
     REG.watched[root] = c
+    -- El evento solo encola (O(1)); el trabajo real se hace por lotes en Heartbeat.
     U.conn(root.DescendantAdded, function(inst)
         c.count = c.count + 1
         c.added = c.added + 1
         REG.instAdded = REG.instAdded + 1
-        if isOwnGui(inst) then return end
-        classify(inst, rootName, false)
-        if REG.scanDone and (rootName ~= "Workspace" or REG.logWorkspaceInstances) and rootName ~= "Players" then
-            if U.rateOk(c) then
-                local okc, cls = pcall(function() return inst.ClassName end)
-                LOG.add("Instancia", inst.Name, "", "", nil, "Nueva " .. tostring(okc and cls or "?") .. " en " .. U.path(inst))
-            end
-        end
-    end)
+        local q, t = REG.queue, REG.qTail
+        q[t + 1], q[t + 2] = inst, c
+        REG.qTail = t + 2
+        local pending = (REG.qTail - REG.qHead + 1) / 2
+        if pending > REG.qMax then REG.qMax = pending end
+    end, "DescendantAdded " .. rootName)
     U.conn(root.DescendantRemoving, function(inst)
         c.count = math.max(0, c.count - 1)
         c.removed = c.removed + 1
@@ -554,7 +594,41 @@ local function watchContainer(root, rootName)
         if REG.remoteByInst[inst] then removeRemote(inst) end
         if REG.toolByInst[inst] then removeTool(inst) end
         if REG.buttonByInst[inst] then removeButton(inst) end
-    end)
+        if REG.valueByInst[inst] then removeValue(inst) end
+    end, "DescendantRemoving " .. rootName)
+end
+
+local function processAdded(inst, c)
+    local okA, alive = pcall(function() return inst:IsDescendantOf(game) end)
+    if not (okA and alive) or isOwnGui(inst) then return end
+    classify(inst, c.name, false)
+    if REG.scanDone and (c.name ~= "Workspace" or REG.logWorkspaceInstances) and c.name ~= "Players" then
+        if U.rateOk(c, "instancias nuevas en " .. c.name) then
+            local okc, cls = pcall(function() return inst.ClassName end)
+            LOG.add("Instancia", inst.Name, "", "", nil, "Nueva " .. tostring(okc and cls or "?") .. " en " .. U.path(inst))
+        end
+    end
+end
+
+-- Procesa la cola con un presupuesto de tiempo por frame.
+do
+    local hb = S.RunService and S.RunService.Heartbeat
+    U.conn(hb, function()
+        local q = REG.queue
+        if REG.qHead > REG.qTail then return end
+        local deadline = os.clock() + REG.qBudgetMs / 1000
+        local n = 0
+        while REG.qHead <= REG.qTail do
+            local inst, c = q[REG.qHead], q[REG.qHead + 1]
+            q[REG.qHead], q[REG.qHead + 1] = nil, nil
+            REG.qHead = REG.qHead + 2
+            U.try("cola de instancias", processAdded, inst, c)
+            REG.qProcessed = REG.qProcessed + 1
+            n = n + 1
+            if n % 16 == 0 and os.clock() > deadline then break end
+        end
+        if REG.qHead > REG.qTail then REG.queue, REG.qHead, REG.qTail = {}, 1, 0 end
+    end, "cola Heartbeat")
 end
 
 -- Escaneo inicial por partes (no congela el juego).
@@ -625,7 +699,7 @@ function WATCH.has(inst)
 end
 
 ---------------------------------------------------------------- CONSOLA (LogService)
-local CONSOLE = {errors = 0, warnings = 0, infos = 0, last = {}}
+local CONSOLE = {errors = 0, warnings = 0, infos = 0, rateName = "consola"}
 do
     if S.LogService then
         U.conn(S.LogService.MessageOut, function(msg, mtype)
@@ -640,7 +714,7 @@ do
             end
             local m = tostring(msg)
             if m:find("GOY DIAG", 1, true) then return end
-            if U.rateOk(CONSOLE) then
+            if U.rateOk(CONSOLE, "consola del cliente") then
                 LOG.add("Consola", t:find("Error") and "Error" or "Advertencia", "Consola del cliente", U.trunc(m, 400), nil, "")
             end
         end)
@@ -743,6 +817,33 @@ local function guiParent()
     return LP:WaitForChild("PlayerGui")
 end
 
+---------------- Configuración persistente (GOY_Diag/config.json, si hay readfile/writefile)
+local CFG = {data = {}, file = "GOY_Diag/config.json", dirty = false, lastFlush = 0}
+function CFG.load()
+    if not (CAP.readfile and S.HttpService) then return end
+    pcall(function()
+        if CAP.isfile and not CAP.isfile(CFG.file) then return end
+        local t = S.HttpService:JSONDecode(CAP.readfile(CFG.file))
+        if type(t) == "table" then CFG.data = t end
+    end)
+end
+function CFG.get(k, d)
+    local v = CFG.data[k]
+    if v == nil then return d end
+    return v
+end
+function CFG.set(k, v)
+    if CFG.data[k] ~= v then CFG.data[k] = v; CFG.dirty = true end
+end
+function CFG.flush(force)
+    if not CFG.dirty or not CAP.writefile or not S.HttpService then return end
+    if not force and os.clock() - CFG.lastFlush < 2 then return end
+    CFG.dirty, CFG.lastFlush = false, os.clock()
+    local ok, raw = pcall(function() return S.HttpService:JSONEncode(CFG.data) end)
+    if ok then U.export("config.json", raw) end
+end
+CFG.load()
+
 local parentGui = guiParent()
 pcall(function()
     local old = parentGui:FindFirstChild("GOY_Diagnostics")
@@ -750,16 +851,34 @@ pcall(function()
 end)
 local screen = mk("ScreenGui", {Name = "GOY_Diagnostics", ResetOnSpawn = false, IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999})
+-- Safe area: notch, isla dinámica y barra inferior del iPhone.
+pcall(function() screen.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets end)
 GUI_ROOT = screen
 screen.Parent = parentGui
 
 local vp = Vector2.new(844, 390)
 pcall(function() vp = workspace.CurrentCamera.ViewportSize end)
-local PW = math.floor(math.clamp(vp.X * 0.92, 320, 620))
-local PH = math.floor(math.clamp(vp.Y * 0.86, 260, 430))
+local function screenSize()
+    local ok, s2 = pcall(function() return screen.AbsoluteSize end)
+    if ok and s2 and s2.X and s2.X > 0 then return s2 end
+    return vp
+end
+local MIN_W, MIN_H = 300, 240
+local PW = math.floor(math.clamp(CFG.get("w", vp.X * 0.92), MIN_W, math.max(MIN_W, vp.X - 8)))
+local PH = math.floor(math.clamp(CFG.get("h", vp.Y * 0.86), MIN_H, math.max(MIN_H, vp.Y - 8)))
+
+-- Mantiene un marco dentro de la pantalla (posición en píxeles).
+local function clampFrame(f)
+    pcall(function()
+        local ss, fs, p = screenSize(), f.AbsoluteSize, f.Position
+        local x = math.clamp(p.X.Offset + p.X.Scale * ss.X, 0, math.max(0, ss.X - fs.X))
+        local y = math.clamp(p.Y.Offset + p.Y.Scale * ss.Y, 0, math.max(0, ss.Y - fs.Y))
+        f.Position = UDim2.fromOffset(math.floor(x), math.floor(y))
+    end)
+end
 
 ---------------- Arrastre táctil (sin APIs de escritorio)
-local function draggable(handle, target, onTap)
+local function draggable(handle, target, onTap, onEnd)
     local dragging, startPos, startUD, moved = false, nil, nil, false
     U.conn(handle.InputBegan, function(input)
         local t = input.UserInputType
@@ -771,6 +890,8 @@ local function draggable(handle, target, onTap)
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
                     if c then c:Disconnect() end
+                    clampFrame(target)
+                    if moved and onEnd then onEnd() end
                 end
             end)
         end
@@ -783,6 +904,7 @@ local function draggable(handle, target, onTap)
             if math.abs(d.X) + math.abs(d.Y) > 8 then moved = true end
             if moved then
                 target.Position = UDim2.new(startUD.X.Scale, startUD.X.Offset + d.X, startUD.Y.Scale, startUD.Y.Offset + d.Y)
+                clampFrame(target)
             end
         end
     end)
@@ -795,47 +917,51 @@ local function draggable(handle, target, onTap)
 end
 
 ---------------- Botón flotante
-local fab = mk("TextButton", {Name = "Fab", Size = UDim2.fromOffset(58, 58), Position = UDim2.new(1, -74, 0.3, 0),
+local fab = mk("TextButton", {Name = "Fab", Size = UDim2.fromOffset(60, 60),
+    Position = UDim2.fromOffset(CFG.get("fabX", vp.X - 76), CFG.get("fabY", math.floor(vp.Y * 0.3))),
     BackgroundColor3 = TH.panel, Text = "GOY", TextColor3 = TH.text, Font = Enum.Font.GothamBlack, TextSize = 15,
     AutoButtonColor = false, ZIndex = 50}, screen)
-corner(fab, 29)
+corner(fab, 30)
 stroke(fab, TH.cyan, 2)
 mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(0, 120, 160), Color3.fromRGB(90, 40, 170)), Rotation = 45}, fab)
 local fabDot = mk("Frame", {Size = UDim2.fromOffset(12, 12), Position = UDim2.new(1, -14, 0, 2), BackgroundColor3 = TH.ok, ZIndex = 51}, fab)
 corner(fabDot, 6)
 
 ---------------- Panel
-local panel = mk("Frame", {Name = "Panel", Size = UDim2.fromOffset(PW, PH), Position = UDim2.new(0.5, -PW / 2, 0.5, -PH / 2),
+local panel = mk("Frame", {Name = "Panel", Size = UDim2.fromOffset(PW, PH),
+    Position = UDim2.fromOffset(CFG.get("x", math.floor((vp.X - PW) / 2)), CFG.get("y", math.floor((vp.Y - PH) / 2))),
     BackgroundColor3 = TH.bg, Visible = false, ZIndex = 10, Active = true}, screen)
 corner(panel, 14)
 stroke(panel, TH.cyan, 1.5, 0.2)
 mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 200, 255)), Rotation = 90}, panel)
+local uiScale = mk("UIScale", {Scale = CFG.get("scale", 1)}, panel)
 
-local header = mk("TextButton", {Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = TH.panel, Text = "", AutoButtonColor = false, ZIndex = 11}, panel)
+local header = mk("TextButton", {Size = UDim2.new(1, 0, 0, 52), BackgroundColor3 = TH.panel, Text = "", AutoButtonColor = false, ZIndex = 11}, panel)
 corner(header, 14)
 mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(0, 70, 95), Color3.fromRGB(55, 25, 105)), Rotation = 0}, header)
 local statusDot = mk("Frame", {Size = UDim2.fromOffset(10, 10), Position = UDim2.new(0, 12, 0.5, -5), BackgroundColor3 = TH.ok, ZIndex = 12}, header)
 corner(statusDot, 5)
-mk("TextLabel", {Size = UDim2.new(1, -150, 1, 0), Position = UDim2.fromOffset(30, 0), BackgroundTransparency = 1,
+mk("TextLabel", {Size = UDim2.new(1, -140, 1, 0), Position = UDim2.fromOffset(30, 0), BackgroundTransparency = 1,
     RichText = true, Text = '<font color="' .. HEX.cyan .. '">GOY</font> DIAGNOSTICS <font color="' .. HEX.dim .. '">· solo lectura</font>',
-    TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 12}, header)
+    TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left,
+    TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 12}, header)
 local function headBtn(txt, x, color)
-    local b = mk("TextButton", {Size = UDim2.fromOffset(40, 30), Position = UDim2.new(1, x, 0.5, -15), BackgroundColor3 = TH.card2,
+    local b = mk("TextButton", {Size = UDim2.fromOffset(46, 44), Position = UDim2.new(1, x, 0.5, -22), BackgroundColor3 = TH.card2,
         Text = txt, TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 16, ZIndex = 12, AutoButtonColor = true}, header)
     corner(b, 8)
     return b
 end
-local closeBtn = headBtn("×", -46, TH.bad)
-local minBtn = headBtn("–", -92)
+local closeBtn = headBtn("×", -52, TH.bad)
+local minBtn = headBtn("–", -104)
 
-local tabBar = mk("ScrollingFrame", {Size = UDim2.new(1, -16, 0, 40), Position = UDim2.fromOffset(8, 42), BackgroundTransparency = 1,
+local tabBar = mk("ScrollingFrame", {Size = UDim2.new(1, -16, 0, 46), Position = UDim2.fromOffset(8, 56), BackgroundTransparency = 1,
     ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X,
     CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 11}, panel)
 mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, tabBar)
 
-local body = mk("Frame", {Size = UDim2.new(1, -16, 1, -112), Position = UDim2.fromOffset(8, 86), BackgroundTransparency = 1,
+local body = mk("Frame", {Size = UDim2.new(1, -16, 1, -134), Position = UDim2.fromOffset(8, 106), BackgroundTransparency = 1,
     ClipsDescendants = true, ZIndex = 11}, panel)
-local footer = mk("TextLabel", {Size = UDim2.new(1, -20, 0, 20), Position = UDim2.new(0, 10, 1, -24), BackgroundTransparency = 1,
+local footer = mk("TextLabel", {Size = UDim2.new(1, -60, 0, 20), Position = UDim2.new(0, 10, 1, -24), BackgroundTransparency = 1,
     Text = "", RichText = true, TextColor3 = TH.dim, Font = Enum.Font.Gotham, TextSize = 11,
     TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11}, panel)
 
@@ -865,7 +991,7 @@ end
 local TABS = {"MAIN", "REMOTES", "TOOLS", "BUTTONS", "LOGS", "PERFORMANCE"}
 local tabButtons = {}
 for i, name in ipairs(TABS) do
-    local b = mk("TextButton", {Size = UDim2.fromOffset(name == "PERFORMANCE" and 118 or 92, 34), BackgroundColor3 = TH.card,
+    local b = mk("TextButton", {Size = UDim2.fromOffset(name == "PERFORMANCE" and 122 or 96, 44), BackgroundColor3 = TH.card,
         Text = name, TextColor3 = TH.dim, Font = Enum.Font.GothamBold, TextSize = 12, LayoutOrder = i, ZIndex = 12, AutoButtonColor = false}, tabBar)
     corner(b, 9)
     b:SetAttribute("tab", name)
@@ -876,14 +1002,14 @@ end
 
 ---------------- Barra de herramientas y lista reutilizable
 function UI.toolbar(page)
-    local bar = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1, ScrollBarThickness = 0,
+    local bar = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 0, 48), BackgroundTransparency = 1, ScrollBarThickness = 0,
         ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 12}, page)
     mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
         VerticalAlignment = Enum.VerticalAlignment.Center}, bar)
     local tb = {bar = bar, n = 0}
     function tb.search(placeholder, w)
         tb.n = tb.n + 1
-        local box = mk("TextBox", {Size = UDim2.fromOffset(w or 150, 34), BackgroundColor3 = TH.card, Text = "", PlaceholderText = placeholder or "Buscar…",
+        local box = mk("TextBox", {Size = UDim2.fromOffset(w or 150, 44), BackgroundColor3 = TH.card, Text = "", PlaceholderText = placeholder or "Buscar…",
             PlaceholderColor3 = TH.dim, TextColor3 = TH.text, Font = Enum.Font.Gotham, TextSize = 13, ClearTextOnFocus = false,
             TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = tb.n, ZIndex = 12}, bar)
         corner(box, 8); stroke(box, TH.cyan, 1, 0.55); pad(box, 8)
@@ -891,7 +1017,7 @@ function UI.toolbar(page)
     end
     function tb.button(text, fn, color, w)
         tb.n = tb.n + 1
-        local b = mk("TextButton", {Size = UDim2.fromOffset(w or 78, 34), BackgroundColor3 = TH.card2, Text = text,
+        local b = mk("TextButton", {Size = UDim2.fromOffset(w or 78, 44), BackgroundColor3 = TH.card2, Text = text,
             TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 12, LayoutOrder = tb.n, ZIndex = 12}, bar)
         corner(b, 8); stroke(b, TH.violet, 1, 0.6)
         if fn then U.conn(b.Activated, function() fn(b) end) end
@@ -900,73 +1026,106 @@ function UI.toolbar(page)
     return tb
 end
 
--- Lista con filas reutilizadas (máx. MAX_ROWS visibles para no cargar la GUI).
-local MAX_ROWS = 150
+-- Lista VIRTUAL: solo existen las filas visibles (+3); se reubican al desplazar.
+-- Los ítems pueden ser una tabla ya hecha o (n, función que crea el ítem i).
+local ROW_H, ROW_GAP = 56, 5
 function UI.list(page, top)
-    local sf = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 1, -(top or 44)), Position = UDim2.fromOffset(0, top or 44),
-        BackgroundColor3 = TH.panel, BackgroundTransparency = 0.15, ScrollBarThickness = 5, ScrollBarImageColor3 = TH.cyan,
-        AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(0, 0, 0, 0), ScrollingDirection = Enum.ScrollingDirection.Y,
+    local sf = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 1, -(top or 52)), Position = UDim2.fromOffset(0, top or 52),
+        BackgroundColor3 = TH.panel, BackgroundTransparency = 0.15, ScrollBarThickness = 6, ScrollBarImageColor3 = TH.cyan,
+        AutomaticCanvasSize = Enum.AutomaticSize.None, CanvasSize = UDim2.new(0, 0, 0, 0), ScrollingDirection = Enum.ScrollingDirection.Y,
         ElasticBehavior = Enum.ElasticBehavior.Always, ZIndex = 11}, page)
     corner(sf, 10)
-    pad(sf, 6)
-    mk("UIListLayout", {Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder}, sf)
-    local L = {sf = sf, rows = {}, items = {}}
+    local L = {sf = sf, rows = {}, n = 0, get = nil, cache = {}, items = {}}
+    function L.item(i)
+        local it = L.cache[i]
+        if it == nil and L.get then
+            it = L.get(i)
+            L.cache[i] = it
+        end
+        return it
+    end
+    local function makeRow(k)
+        local row = mk("TextButton", {Size = UDim2.new(1, -14, 0, ROW_H - ROW_GAP), BackgroundColor3 = TH.card, Text = "", AutoButtonColor = true,
+            ZIndex = 12, Visible = false}, sf)
+        corner(row, 8)
+        local bar = mk("Frame", {Size = UDim2.new(0, 3, 1, -14), Position = UDim2.fromOffset(5, 7), BackgroundColor3 = TH.cyan, BorderSizePixel = 0, ZIndex = 13}, row)
+        local t1 = mk("TextLabel", {Size = UDim2.new(1, -22, 0, 22), Position = UDim2.fromOffset(15, 5), BackgroundTransparency = 1, RichText = true,
+            TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13}, row)
+        local t2 = mk("TextLabel", {Size = UDim2.new(1, -22, 0, 18), Position = UDim2.fromOffset(15, 28), BackgroundTransparency = 1, RichText = true,
+            TextColor3 = TH.dim, Font = Enum.Font.Code, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13}, row)
+        local r = {btn = row, bar = bar, t1 = t1, t2 = t2, idx = 0}
+        U.conn(row.Activated, function()
+            local it = L.item(r.idx)
+            if it and it.onTap then it.onTap() end
+        end, "fila")
+        L.rows[k] = r
+        return r
+    end
+    function L.draw()
+        local viewH = 400
+        pcall(function() viewH = sf.AbsoluteWindowSize.Y end)
+        if not viewH or viewH <= 0 then viewH = 400 end
+        local scrollY = 0
+        pcall(function() scrollY = sf.CanvasPosition.Y end)
+        local first = math.max(1, math.floor(scrollY / ROW_H) + 1)
+        local need = math.ceil(viewH / ROW_H) + 3
+        for k = 1, need do
+            local r = L.rows[k] or makeRow(k)
+            local i = first + k - 1
+            if i <= L.n then
+                local it = L.item(i)
+                r.idx = i
+                r.btn.Position = UDim2.fromOffset(6, (i - 1) * ROW_H + 6)
+                r.btn.Visible = true
+                if r.t1.Text ~= it.title then r.t1.Text = it.title end
+                local sub = it.sub or ""
+                if r.t2.Text ~= sub then r.t2.Text = sub end
+                r.bar.BackgroundColor3 = it.color or TH.cyan
+            else
+                r.btn.Visible = false
+                r.idx = 0
+            end
+        end
+        for k = need + 1, #L.rows do L.rows[k].btn.Visible = false; L.rows[k].idx = 0 end
+    end
+    function L.setLazy(n, get)
+        L.n, L.get, L.cache = n, get, {}
+        sf.CanvasSize = UDim2.new(0, 0, 0, n * ROW_H + 12)
+        L.draw()
+    end
     function L.set(items)
         L.items = items
-        for i = 1, math.min(#items, MAX_ROWS + 1) do
-            local row = L.rows[i]
-            if not row then
-                row = mk("TextButton", {Size = UDim2.new(1, -4, 0, 48), BackgroundColor3 = TH.card, Text = "", AutoButtonColor = true,
-                    LayoutOrder = i, ZIndex = 12}, sf)
-                corner(row, 8)
-                local bar = mk("Frame", {Size = UDim2.new(0, 3, 1, -12), Position = UDim2.fromOffset(4, 6), BackgroundColor3 = TH.cyan, BorderSizePixel = 0, ZIndex = 13}, row)
-                local t1 = mk("TextLabel", {Size = UDim2.new(1, -20, 0, 20), Position = UDim2.fromOffset(14, 4), BackgroundTransparency = 1, RichText = true,
-                    TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
-                    TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13}, row)
-                local t2 = mk("TextLabel", {Size = UDim2.new(1, -20, 0, 18), Position = UDim2.fromOffset(14, 25), BackgroundTransparency = 1, RichText = true,
-                    TextColor3 = TH.dim, Font = Enum.Font.Code, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
-                    TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13}, row)
-                row:SetAttribute("i", i)
-                U.conn(row.Activated, function()
-                    local it = L.items[i]
-                    if it and it.onTap then it.onTap() end
-                end)
-                L.rows[i] = {btn = row, bar = bar, t1 = t1, t2 = t2}
-                row = L.rows[i]
-            end
-            local it = items[i]
-            if i > MAX_ROWS then
-                it = {title = '<font color="' .. HEX.dim .. '">Mostrando ' .. MAX_ROWS .. ' de ' .. #items .. '</font>', sub = "Usa la búsqueda o los filtros para acotar"}
-                L.items[i] = it
-            end
-            row.btn.Visible = true
-            if row.t1.Text ~= it.title then row.t1.Text = it.title end
-            if row.t2.Text ~= (it.sub or "") then row.t2.Text = it.sub or "" end
-            row.bar.BackgroundColor3 = it.color or TH.cyan
-        end
-        for i = math.min(#items, MAX_ROWS + 1) + 1, #L.rows do
-            L.rows[i].btn.Visible = false
-        end
+        L.setLazy(#items, function(i) return items[i] end)
     end
+    -- Copia de todos los ítems (para Copiar), sin depender de lo visible.
+    function L.all()
+        local out = {}
+        for i = 1, L.n do out[#out + 1] = L.item(i) end
+        return out
+    end
+    U.conn(sf:GetPropertyChangedSignal("CanvasPosition"), function() L.draw() end, "scroll lista")
+    U.conn(sf:GetPropertyChangedSignal("AbsoluteWindowSize"), function() L.draw() end, "tamaño lista")
     return L
 end
 
 ---------------- Detalle (texto largo, seleccionable, en bloques)
 local detail = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = TH.bg, Visible = false, ZIndex = 30, Active = true}, body)
 corner(detail, 10); stroke(detail, TH.violet, 1.2)
-local detailTitle = mk("TextLabel", {Size = UDim2.new(1, -250, 0, 36), Position = UDim2.fromOffset(10, 2), BackgroundTransparency = 1, RichText = true,
+local detailTitle = mk("TextLabel", {Size = UDim2.new(1, -262, 0, 44), Position = UDim2.fromOffset(10, 3), BackgroundTransparency = 1, RichText = true,
     TextColor3 = TH.cyan, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left,
     TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 31}, detail)
 local function dBtn(txt, x, w, color)
-    local b = mk("TextButton", {Size = UDim2.fromOffset(w, 32), Position = UDim2.new(1, x, 0, 4), BackgroundColor3 = TH.card2, Text = txt,
+    local b = mk("TextButton", {Size = UDim2.fromOffset(w, 44), Position = UDim2.new(1, x, 0, 3), BackgroundColor3 = TH.card2, Text = txt,
         TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 31}, detail)
     corner(b, 8)
     return b
 end
-local dClose = dBtn("Cerrar", -74, 68, TH.bad)
-local dCopy = dBtn("Copiar", -148, 68, TH.cyan)
-local dExtra = dBtn("", -240, 86, TH.violet)
-local dScroll = mk("ScrollingFrame", {Size = UDim2.new(1, -12, 1, -46), Position = UDim2.fromOffset(6, 42), BackgroundColor3 = TH.panel,
+local dClose = dBtn("Cerrar", -76, 70, TH.bad)
+local dCopy = dBtn("Copiar", -152, 70, TH.cyan)
+local dExtra = dBtn("", -250, 92, TH.violet)
+local dScroll = mk("ScrollingFrame", {Size = UDim2.new(1, -12, 1, -56), Position = UDim2.fromOffset(6, 50), BackgroundColor3 = TH.panel,
     ScrollBarThickness = 5, ScrollBarImageColor3 = TH.violet, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(0, 0, 0, 0),
     ZIndex = 31}, detail)
 corner(dScroll, 8); pad(dScroll, 8)
@@ -1014,6 +1173,7 @@ U.conn(dExtra.Activated, function() if dExtraFn then dExtraFn() end end)
 ---------------- Abrir / cerrar / cambiar pestaña
 function UI.setTab(name)
     UI.tab = name
+    CFG.set("tab", name)
     detail.Visible = false
     for n, p in pairs(UI.pages) do p.Visible = (n == name) end
     for n, b in pairs(tabButtons) do
@@ -1035,8 +1195,71 @@ function UI.toggle(state)
     panel.Visible = state
     if state then UI.force = true end
 end
-draggable(fab, fab, function() UI.toggle() end)
-draggable(header, panel, nil)
+local function savePos()
+    pcall(function()
+        CFG.set("fabX", fab.Position.X.Offset); CFG.set("fabY", fab.Position.Y.Offset)
+        CFG.set("x", panel.Position.X.Offset); CFG.set("y", panel.Position.Y.Offset)
+        CFG.set("w", panel.Size.X.Offset); CFG.set("h", panel.Size.Y.Offset)
+    end)
+end
+draggable(fab, fab, function() UI.toggle() end, savePos)
+draggable(header, panel, nil, savePos)
+
+---------------- Esquina para redimensionar
+local grip = mk("TextButton", {Size = UDim2.fromOffset(44, 44), Position = UDim2.new(1, -44, 1, -44), BackgroundTransparency = 1,
+    Text = "◢", TextColor3 = TH.cyan, TextTransparency = 0.3, Font = Enum.Font.GothamBold, TextSize = 18, ZIndex = 25,
+    TextXAlignment = Enum.TextXAlignment.Right, TextYAlignment = Enum.TextYAlignment.Bottom}, panel)
+do
+    local resizing, startPos, startSize = false, nil, nil
+    U.conn(grip.InputBegan, function(input)
+        local t = input.UserInputType
+        if t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseButton1 then
+            resizing, startPos, startSize = true, input.Position, panel.Size
+            local c
+            c = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    resizing = false
+                    if c then c:Disconnect() end
+                    savePos()
+                end
+            end)
+        end
+    end, "resize")
+    U.conn(S.UIS.InputChanged, function(input)
+        if not resizing then return end
+        local t = input.UserInputType
+        if t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseMovement then
+            local d = input.Position - startPos
+            local ss, sc = screenSize(), uiScale.Scale
+            local maxW = (ss.X - panel.Position.X.Offset) / sc
+            local maxH = (ss.Y - panel.Position.Y.Offset) / sc
+            local w = math.clamp(startSize.X.Offset + d.X / sc, MIN_W, math.max(MIN_W, maxW))
+            local h = math.clamp(startSize.Y.Offset + d.Y / sc, MIN_H, math.max(MIN_H, maxH))
+            panel.Size = UDim2.fromOffset(math.floor(w), math.floor(h))
+            PW, PH = math.floor(w), math.floor(h)
+        end
+    end, "resize mover")
+end
+
+---------------- Escala de la interfaz y orientación
+local SCALES = {0.85, 1, 1.15, 1.3}
+function UI.cycleScale()
+    local cur, nextS = uiScale.Scale, SCALES[1]
+    for i, v in ipairs(SCALES) do if math.abs(v - cur) < 0.01 then nextS = SCALES[i % #SCALES + 1] end end
+    uiScale.Scale = nextS
+    CFG.set("scale", nextS)
+    clampFrame(panel)
+    return nextS
+end
+U.conn(screen:GetPropertyChangedSignal("AbsoluteSize"), function()
+    -- Giro vertical/horizontal: el panel cabe y queda dentro de la pantalla.
+    local ss, sc = screenSize(), uiScale.Scale
+    local w = math.clamp(PW, MIN_W, math.max(MIN_W, ss.X / sc - 8))
+    local h = math.clamp(PH, MIN_H, math.max(MIN_H, ss.Y / sc - 8))
+    panel.Size = UDim2.fromOffset(math.floor(w), math.floor(h))
+    clampFrame(panel); clampFrame(fab)
+end, "orientación")
+task.defer(function() clampFrame(panel); clampFrame(fab) end)
 U.conn(closeBtn.Activated, function() UI.toggle(false) end)
 
 ---------------------------------------------------------------- INSPECTOR DE OBJETOS
@@ -1144,8 +1367,20 @@ do
     tb.button("Script Studio", function()
         UI.detail("Script de Studio (servidor, solo tu juego)", STUDIO_SCRIPT)
     end, TH.violet, 108)
+    tb.button("Escala " .. math.floor(CFG.get("scale", 1) * 100) .. "%", function(b)
+        local sc = UI.cycleScale()
+        b.Text = "Escala " .. math.floor(sc * 100 + 0.5) .. "%"
+    end, nil, 104)
+    if CAP.queue_on_teleport then
+        local function label() return "Teleport: " .. (CFG.get("reloadOnTeleport", false) and "recargar" or "no") end
+        tb.button(label(), function(b)
+            CFG.set("reloadOnTeleport", not CFG.get("reloadOnTeleport", false))
+            b.Text = label()
+            UI.toast(CFG.get("reloadOnTeleport", false) and "Se recargará solo al teletransportarte (desde tu repo de GitHub)" or "No se recargará tras teletransporte")
+        end, TH.violet, 140)
+    end
     tb.button("Apagar", function() G.destroy() end, TH.bad, 76)
-    UI.lists.MAIN = UI.list(page, 44)
+    UI.lists.MAIN = UI.list(page, 52)
 end
 
 function UI.summaryText()
@@ -1212,7 +1447,7 @@ local function renderMain()
 end
 
 ---------------------------------------------------------------- REMOTES
-local remoteState = {q = "", cls = 1, sort = 1}
+local remoteState = {q = "", cls = CFG.get("remoteCls", 1), sort = CFG.get("remoteSort", 1)}
 local CLS_FILTERS = {"Todas", "RemoteEvent", "UnreliableRemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction", "Con actividad"}
 local CLS_SHORT = {Todas = "Clase: todas", RemoteEvent = "RemoteEvent", UnreliableRemoteEvent = "Unreliable", RemoteFunction = "RemoteFunction",
     BindableEvent = "BindableEvent", BindableFunction = "BindableFunc", ["Con actividad"] = "Con actividad"}
@@ -1252,14 +1487,18 @@ do
     local tb = UI.toolbar(page)
     local box = tb.search("Nombre, ruta, clase…", 150)
     U.conn(box:GetPropertyChangedSignal("Text"), function() remoteState.q = box.Text; UI.force = true end)
-    tb.button(CLS_SHORT.Todas, function(b)
+    if not CLS_FILTERS[remoteState.cls] then remoteState.cls = 1 end
+    if not SORTS[remoteState.sort] then remoteState.sort = 1 end
+    tb.button(CLS_SHORT[CLS_FILTERS[remoteState.cls]], function(b)
         remoteState.cls = remoteState.cls % #CLS_FILTERS + 1
         b.Text = CLS_SHORT[CLS_FILTERS[remoteState.cls]]
+        CFG.set("remoteCls", remoteState.cls)
         UI.force = true
     end, TH.cyan, 116)
-    tb.button("Orden: Actividad", function(b)
+    tb.button("Orden: " .. SORTS[remoteState.sort], function(b)
         remoteState.sort = remoteState.sort % #SORTS + 1
         b.Text = "Orden: " .. SORTS[remoteState.sort]
+        CFG.set("remoteSort", remoteState.sort)
         UI.force = true
     end, nil, 124)
     tb.button("Copiar", function()
@@ -1269,7 +1508,7 @@ do
         end
         UI.copyOrShow("Remotos", table.concat(t, "\n"))
     end, TH.ok, 72)
-    UI.lists.REMOTES = UI.list(page, 44)
+    UI.lists.REMOTES = UI.list(page, 52)
 end
 local function renderRemotes()
     local items = {}
@@ -1345,12 +1584,12 @@ do
     end, TH.cyan, 72)
     tb.button("Copiar", function()
         local t = {"GOY Diagnostics · " .. TOOL_MODES[toolState.mode]}
-        for _, it in ipairs(UI.lists.TOOLS.items) do
+        for _, it in ipairs(UI.lists.TOOLS.all()) do
             t[#t + 1] = (it.copy or ((it.title or ""):gsub("<[^>]->", "") .. " · " .. (it.sub or ""):gsub("<[^>]->", "")))
         end
         UI.copyOrShow("Herramientas", table.concat(t, "\n"))
     end, TH.ok, 72)
-    UI.lists.TOOLS = UI.list(page, 44)
+    UI.lists.TOOLS = UI.list(page, 52)
 end
 local function renderTools()
     local items, q = {}, U.lower(toolState.q)
@@ -1446,7 +1685,7 @@ do
         end
         UI.copyOrShow("Botones", table.concat(t, "\n"))
     end, TH.ok, 72)
-    UI.lists.BUTTONS = UI.list(page, 44)
+    UI.lists.BUTTONS = UI.list(page, 52)
 end
 local function renderButtons()
     local items, q, f = {}, U.lower(btnState.q), BTN_FILTERS[btnState.f]
@@ -1480,7 +1719,8 @@ local function renderButtons()
 end
 
 ---------------------------------------------------------------- LOGS
-local logState = {q = "", cat = 1, box = nil}
+local logState = {q = "", cat = CFG.get("logCat", 1), box = nil}
+if not CATS[logState.cat] then logState.cat = 1 end
 local function filteredLogs(limit)
     local q, cat = U.lower(logState.q), CATS[logState.cat]
     local out = {}
@@ -1503,9 +1743,10 @@ do
     local box = tb.search("Buscar en registros…", 140)
     logState.box = box
     U.conn(box:GetPropertyChangedSignal("Text"), function() logState.q = box.Text; UI.force = true end)
-    logState.catBtn = tb.button("Categoría: Todas", function(b)
+    logState.catBtn = tb.button("Categoría: " .. CATS[logState.cat], function(b)
         logState.cat = logState.cat % #CATS + 1
         b.Text = "Categoría: " .. CATS[logState.cat]
+        CFG.set("logCat", logState.cat)
         UI.force = true
     end, TH.cyan, 132)
     tb.button("Pausa", function(b)
@@ -1531,29 +1772,27 @@ do
         local ok, where = U.export(name, table.concat(t, "\n"))
         UI.toast(ok and ("Guardado: " .. where) or ("No se pudo exportar: " .. tostring(where)))
     end, TH.violet, 84)
-    UI.lists.LOGS = UI.list(page, 44)
+    UI.lists.LOGS = UI.list(page, 52)
 end
 local function renderLogs()
-    local items = {}
-    local list = filteredLogs(MAX_ROWS + 1)
-    for _, e in ipairs(list) do
+    local list = filteredLogs()
+    if #list == 0 then
+        UI.lists.LOGS.set({{title = rich(HEX.dim, LOG.paused and "Registro en pausa" or "Sin registros todavía"),
+            sub = "Aparecen cuando el servidor te envía señales, cambian tus herramientas o valores, o tocas botones"}})
+        return
+    end
+    -- Lista virtual: el texto de cada fila se arma solo cuando se ve.
+    UI.lists.LOGS.setLazy(#list, function(i)
+        local e = list[i]
         local hex = CAT_HEX[e.cat] or HEX.text
         local preview = e.args ~= "" and e.args or e.extra
-        items[#items + 1] = {
+        return {
             title = rich(HEX.dim, e.t) .. "  " .. rich(hex, e.cat) .. "  " .. U.esc(e.name) .. (e.dir ~= "" and ("  " .. rich(HEX.dim, "· " .. e.dir)) or ""),
             sub = U.esc(U.trunc(preview:gsub("\n", "  ·  "), 180)),
             color = Color3.fromHex and Color3.fromHex(hex) or TH.cyan,
             onTap = function() UI.detail(e.cat .. " · " .. e.name, LOG.format(e)) end,
         }
-    end
-    if #items == 0 then
-        items[1] = {title = rich(HEX.dim, LOG.paused and "Registro en pausa" or "Sin registros todavía"),
-            sub = "Aparecen cuando el servidor te envía señales, cambian tus herramientas o valores, o tocas botones"}
-    elseif #list > MAX_ROWS then
-        items[#items] = nil
-        items[#items + 1] = {title = rich(HEX.dim, "Mostrando los " .. MAX_ROWS .. " más recientes de " .. LOG.n .. " guardados"), sub = "Copiar/Exportar incluyen todos los que coinciden"}
-    end
-    UI.lists.LOGS.set(items)
+    end)
 end
 
 ---------------------------------------------------------------- PERFORMANCE
@@ -1579,7 +1818,7 @@ do
     local tb = UI.toolbar(page)
     tb.button("Copiar métricas", function() UI.copyOrShow("Rendimiento", UI.perfText()) end, TH.cyan, 124)
     tb.button("¿Qué es aproximado?", function() UI.detail("Cómo se mide", PERF_NOTES) end, TH.violet, 150)
-    UI.lists.PERFORMANCE = UI.list(page, 44)
+    UI.lists.PERFORMANCE = UI.list(page, 52)
 end
 local BARS = {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
 local function spark(hist)
@@ -1590,6 +1829,24 @@ local function spark(hist)
     return table.concat(t)
 end
 local function fmt(v, f, unit) if v == nil then return "no disponible" end return string.format(f, v) .. (unit or "") end
+function UI.errorsText()
+    if #G.errors == 0 then return "Sin errores internos." end
+    local t = {}
+    for i, e in ipairs(G.errors) do
+        t[#t + 1] = string.format("#%d  [%s]  hace %.0f s", i, e.where, os.clock() - e.t)
+        t[#t + 1] = e.msg
+        t[#t + 1] = ""
+    end
+    return table.concat(t, "\n")
+end
+do
+    local limiter = {rateName = "errores internos"}
+    G.onInternalError = function(where, err)
+        if U.rateOk(limiter, "errores internos") then
+            LOG.add("Sistema", "Error interno", "", "", nil, tostring(where) .. ": " .. U.trunc(tostring(err):match("^[^\n]*") or "", 200))
+        end
+    end
+end
 function UI.perfText()
     return table.concat({
         "GOY Diagnostics · rendimiento · " .. U.fullDate(),
@@ -1622,7 +1879,11 @@ local function renderPerf()
     end
     row(rich(HEX.text, "Objetos: " .. #REG.remotes .. " remotos · " .. #REG.tools .. " herramientas · " .. #REG.buttons .. " botones"),
         "Registros " .. LOG.total .. " · " .. string.format("%.1f/s", PERF.logRate) .. " · spam no guardado " .. LOG.suppressed, TH.line)
-    row(rich(HEX.dim, "Monitor: " .. #G.conns .. " conexiones"), string.format("render %.2f ms · %.1f actualizaciones/s · errores internos %d", PERF.renderMs, PERF.renderRate, G.internalErrors), TH.line)
+    row(rich(HEX.dim, "Monitor: " .. #G.conns .. " conexiones · cola " .. math.floor((REG.qTail - REG.qHead + 1) / 2) .. " (pico " .. math.floor(REG.qMax) .. ")"),
+        string.format("render %.2f ms · %.1f act./s · %d instancias procesadas por lotes (%.1f ms/frame)", PERF.renderMs, PERF.renderRate, REG.qProcessed, REG.qBudgetMs), TH.line)
+    row(rich(G.internalErrors > 0 and HEX.bad or HEX.ok, "Errores internos del monitor: " .. G.internalErrors),
+        G.internalErrors > 0 and U.esc(U.trunc(G.lastInternalError:gsub("\n", " "), 150)) or "Ninguno · toca para ver el historial con traceback", TH.line)
+    items[#items].onTap = function() UI.detail("Errores internos (últimos 30)", UI.errorsText()) end
     row(rich(HEX.dim, "ⓘ Qué es aproximado y qué necesita Studio"), "Toca para ver cómo se mide cada valor", TH.line)
     items[#items].onTap = function() UI.detail("Cómo se mide", PERF_NOTES) end
     UI.lists.PERFORMANCE.set(items)
@@ -1639,12 +1900,23 @@ local function signature(tab)
     elseif tab == "LOGS" then return LOG.version end
     return nil
 end
+-- Decide si una pestaña necesita redibujarse (separado para que sea legible).
+local PERIOD = {MAIN = 1, PERFORMANCE = 1, BUTTONS = 2, REMOTES = 1.5, TOOLS = 1.5, LOGS = 1.5}
+local function needsRender(tab, now)
+    if UI.force then return true end
+    local age = now - (lastTime[tab] or 0)
+    local period = PERIOD[tab] or 1.5
+    local sig = signature(tab)
+    if sig == nil then return age >= period end          -- pestañas de métricas: por tiempo
+    if sig ~= lastSig[tab] then return age >= 0.3 end      -- cambió algo: como mucho ~3 veces/s
+    return age >= period * 3                              -- refresco de seguridad (textos con hora)
+end
+local RENDER_RAN = 0
 task.spawn(function()
     while G.alive do
         task.wait(0.35)
         if not G.alive then break end
         local now = os.clock()
-        PERF.renderWinCount = PERF.renderWinCount or 0
         if now - PERF.renderWin >= 2 then
             PERF.renderRate = PERF.renderWinCount / (now - PERF.renderWin)
             PERF.renderWin, PERF.renderWinCount = now, 0
@@ -1652,22 +1924,19 @@ task.spawn(function()
         footer.Text = string.format('<font color="%s">%s</font> · remotos %d · registros %d%s · FPS %.0f',
             LOG.paused and HEX.warn or HEX.ok, LOG.paused and "EN PAUSA" or "EN VIVO", #REG.remotes, LOG.total,
             LOG.suppressed > 0 and (" (spam " .. LOG.suppressed .. ")") or "", PERF.fps)
+        CFG.flush(false)
         if UI.open then
-            PERF.sample()
             local tab = UI.tab
-            local sig = signature(tab)
-            local periodic = (tab == "MAIN" or tab == "PERFORMANCE") and 1 or ((tab == "BUTTONS") and 2 or 1.5)
-            if UI.force or sig == nil and (now - (lastTime[tab] or 0) >= periodic) or (sig ~= nil and sig ~= lastSig[tab]) or (now - (lastTime[tab] or 0) >= periodic * 3) then
+            -- Las métricas solo se muestrean donde se muestran.
+            if tab == "MAIN" or tab == "PERFORMANCE" then PERF.sample() end
+            if needsRender(tab, now) then
                 UI.force = false
                 local t0 = os.clock()
-                local ok, err = pcall(RENDER[tab])
-                if not ok then
-                    G.internalErrors = G.internalErrors + 1
-                    G.lastInternalError = tostring(err)
-                end
+                U.try("render " .. tab, RENDER[tab])
                 PERF.renderMs = (os.clock() - t0) * 1000
                 PERF.renderWinCount = PERF.renderWinCount + 1
-                lastSig[tab], lastTime[tab] = sig, now
+                RENDER_RAN = RENDER_RAN + 1
+                lastSig[tab], lastTime[tab] = signature(tab), now
             end
         end
     end
@@ -1679,55 +1948,97 @@ function G.destroy()
     G.alive = false
     for _, c in ipairs(G.conns) do pcall(function() c:Disconnect() end) end
     G.conns = {}
+    CFG.flush(true)
     pcall(function() screen:Destroy() end)
     if ENV.GOY_DIAG == G then ENV.GOY_DIAG = nil end
 end
 U.conn(screen.AncestryChanged, function() if not screen.Parent then G.destroy() end end)
+
+---------------------------------------------------------------- RECARGA TRAS TELETRANSPORTE (opcional, apagada por defecto)
+local RAW_URL = "https://raw.githubusercontent.com/eduardomorfin58-ux/u/main/GOY_Diagnostics.lua"
+if CAP.queue_on_teleport then
+    U.conn(LP.OnTeleport, function(state)
+        if CFG.get("reloadOnTeleport", false) and tostring(state):find("Started") then
+            CFG.flush(true)
+            pcall(CAP.queue_on_teleport, 'loadstring(game:HttpGet("' .. RAW_URL .. '"))()')
+        end
+    end, "teleport")
+end
 
 ---------------------------------------------------------------- MINIMIZAR
 do
     local collapsed = false
     U.conn(minBtn.Activated, function()
         collapsed = not collapsed
-        tabBar.Visible, body.Visible, footer.Visible = not collapsed, not collapsed, not collapsed
-        panel.Size = collapsed and UDim2.fromOffset(PW, 38) or UDim2.fromOffset(PW, PH)
+        tabBar.Visible, body.Visible, footer.Visible, grip.Visible = not collapsed, not collapsed, not collapsed, not collapsed
+        panel.Size = collapsed and UDim2.fromOffset(PW, 52) or UDim2.fromOffset(PW, PH)
     end)
 end
 
----------------------------------------------------------------- SCRIPT DE STUDIO (texto para copiar)
+---------------------------------------------------------------- SCRIPT DE STUDIO (generado desde GOY_Diagnostics_Studio_Server.lua por build.py)
 STUDIO_SCRIPT = [==[
 --[[
- GOY DIAGNOSTICS · SCRIPT DE SERVIDOR (solo para TU propio juego en Roblox Studio)
+ GOY DIAGNOSTICS · SCRIPT DE SERVIDOR v1.1 (solo para TU propio juego en Roblox Studio)
  Dónde va: ServerScriptService → Script (no LocalScript).
  Qué hace:
-   · Escucha OnServerEvent de todos tus RemoteEvent / UnreliableRemoteEvent
-     (agrega un oyente extra, no cambia la lógica de tu juego).
-   · Registra jugador, remoto, argumentos, tipos y frecuencia por jugador;
-     avisa si alguien supera MAX_PER_SECOND.
-   · Marca cada evento con debug.profilebegin/profileend: aparece con nombre
-     propio en el MicroProfiler (Ctrl+F6) y en el Script Profiler.
-   · Para RemoteFunction: usa _G.GOYDiag.wrapInvoke(remote, tuFuncion) en lugar
-     de remote.OnServerInvoke = tuFuncion, y quedará registrado igual.
-   · Si pones tu UserId en AUTHORIZED, envía lo registrado al panel GOY del
-     cliente por el remoto "GOY_DiagFeed" (categoría "Servidor"). A nadie más.
+   · Escucha OnServerEvent de todos tus RemoteEvent / UnreliableRemoteEvent, en
+     cualquier contenedor (agrega un oyente extra, no cambia la lógica del juego).
+   · Registra jugador, remoto, argumentos, tipos y frecuencia por jugador y por
+     remoto (clave = la instancia, no el nombre); avisa si se supera MAX_PER_SECOND.
+   · Marca cada evento con debug.profilebegin/profileend (siempre balanceados):
+     aparece con nombre propio en el MicroProfiler (Ctrl+F6) y en el Script Profiler.
+   · RemoteFunction: usa _G.GOYDiag.wrapInvoke(remote, tuFuncion) en lugar de
+     remote.OnServerInvoke = tuFuncion, y quedará registrado igual.
+   · Envía lo registrado al panel GOY del cliente por "GOY_DiagFeed" solo a
+     jugadores autorizados (ver AUTORIZACIÓN). A nadie más.
+ AUTORIZACIÓN (cualquiera de estas):
+   · En Roblox Studio (RunService:IsStudio()) → todos los jugadores de la prueba.
+   · El dueño del juego (game.CreatorId si el juego es de un usuario).
+   · Si el juego es de un grupo: rango >= GROUP_MIN_RANK en ese grupo.
+   · Los UserId que pongas en AUTHORIZED.
+ Cambios v1.1: profileend garantizado, limitador por instancia, engancha todo el
+ juego, autorización por Studio/dueño/grupo con aviso, métricas extra.
 ]]
 
 local CONFIG = {
-    AUTHORIZED = {},          -- ej. {12345678}: solo estos jugadores reciben el feed
+    AUTHORIZED = {},          -- ej. {12345678}: UserIds extra que reciben el feed
+    GROUP_MIN_RANK = 254,     -- si el juego es de un grupo: rango mínimo autorizado
     PRINT = true,             -- imprime en la consola del servidor (F9 → Server)
     MAX_PER_SECOND = 20,      -- aviso de spam por jugador y remoto
     FEED_PER_SECOND = 20,     -- máximo de mensajes por segundo hacia el panel
     STATS_EVERY = 5,          -- segundos entre envíos de métricas del servidor
-    ROOTS = {"ReplicatedStorage", "Workspace", "ReplicatedFirst"},
 }
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Stats = game:GetService("Stats")
+local DataStoreService = game:GetService("DataStoreService")
 
-local authorized = {}
-for _, id in ipairs(CONFIG.AUTHORIZED) do authorized[id] = true end
+local extra = {}
+for _, id in ipairs(CONFIG.AUTHORIZED) do extra[id] = true end
+
+local authCache = {}
+local function isAuthorized(p)
+    if authCache[p] ~= nil then return authCache[p] end
+    local ok = false
+    if RunService:IsStudio() or extra[p.UserId] then
+        ok = true
+    elseif game.CreatorType == Enum.CreatorType.User and p.UserId == game.CreatorId then
+        ok = true
+    elseif game.CreatorType == Enum.CreatorType.Group then
+        local s, rank = pcall(function() return p:GetRankInGroup(game.CreatorId) end)
+        ok = s and rank >= CONFIG.GROUP_MIN_RANK
+    end
+    authCache[p] = ok
+    if ok then print(("[GOY DIAG] Feed autorizado para %s"):format(p.Name)) end
+    return ok
+end
+Players.PlayerRemoving:Connect(function(p) authCache[p] = nil end)
+
+local mode = RunService:IsStudio() and "Studio (todos los jugadores de prueba)"
+    or (game.CreatorType == Enum.CreatorType.Group and ("grupo, rango >= " .. CONFIG.GROUP_MIN_RANK) or "dueño del juego")
+print("[GOY DIAG] Autorización del feed: " .. mode .. (next(extra) and " + AUTHORIZED" or ""))
 
 local feed = RS:FindFirstChild("GOY_DiagFeed")
 if not feed then
@@ -1774,16 +2085,17 @@ local function sendFeed(...)
     if sentThisSecond >= CONFIG.FEED_PER_SECOND then return end
     sentThisSecond += 1
     for _, p in ipairs(Players:GetPlayers()) do
-        if authorized[p.UserId] then feed:FireClient(p, ...) end
+        if isAuthorized(p) then feed:FireClient(p, ...) end
     end
 end
 
-local rate = {} -- rate[player][remoteName] = {count, start}
-local function overLimit(player, name)
-    rate[player] = rate[player] or {}
-    local r = rate[player][name]
+local rate = {} -- rate[player][remoteInstance] = {count, start}
+local function overLimit(player, remote)
+    local byRemote = rate[player]
+    if not byRemote then byRemote = setmetatable({}, {__mode = "k"}); rate[player] = byRemote end
+    local r = byRemote[remote]
     local now = os.clock()
-    if not r or now - r.start >= 1 then r = {count = 0, start = now}; rate[player][name] = r end
+    if not r or now - r.start >= 1 then r = {count = 0, start = now}; byRemote[remote] = r end
     r.count += 1
     return r.count == CONFIG.MAX_PER_SECOND + 1
 end
@@ -1791,31 +2103,33 @@ Players.PlayerRemoving:Connect(function(p) rate[p] = nil end)
 
 local function record(kind, remote, player, ...)
     debug.profilebegin("GOY " .. kind .. " " .. remote.Name)
-    local args, types = describe(...)
-    if CONFIG.PRINT then
-        print(("[GOY DIAG] %s %s ← %s | %s | tipos: %s"):format(kind, remote:GetFullName(), player.Name, args, types))
-    end
-    sendFeed(kind, remote:GetFullName(), player.Name, args, types)
-    if overLimit(player, remote.Name) then
-        warn(("[GOY DIAG] %s supera %d/s en %s"):format(player.Name, CONFIG.MAX_PER_SECOND, remote:GetFullName()))
-        sendFeed("Spam", remote:GetFullName(), player.Name, ">" .. CONFIG.MAX_PER_SECOND .. "/s", "")
-    end
-    debug.profileend()
+    local ok, err = pcall(function(...)
+        local args, types = describe(...)
+        if CONFIG.PRINT then
+            print(("[GOY DIAG] %s %s ← %s | %s | tipos: %s"):format(kind, remote:GetFullName(), player.Name, args, types))
+        end
+        sendFeed(kind, remote:GetFullName(), player.Name, args, types)
+        if overLimit(player, remote) then
+            warn(("[GOY DIAG] %s supera %d/s en %s"):format(player.Name, CONFIG.MAX_PER_SECOND, remote:GetFullName()))
+            sendFeed("Spam", remote:GetFullName(), player.Name, ">" .. CONFIG.MAX_PER_SECOND .. "/s", "")
+        end
+    end, ...)
+    debug.profileend() -- siempre se cierra, aunque describe falle
+    if not ok then warn("[GOY DIAG] error al registrar: " .. tostring(err)) end
 end
 
 local hooked = setmetatable({}, {__mode = "k"})
 local function hook(obj)
     if hooked[obj] or obj == feed then return end
-    if obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") then
+    local ok, isRemote = pcall(function() return obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") end)
+    if ok and isRemote then
         hooked[obj] = true
         obj.OnServerEvent:Connect(function(player, ...) record("OnServerEvent", obj, player, ...) end)
     end
 end
-for _, rootName in ipairs(CONFIG.ROOTS) do
-    local root = game:GetService(rootName)
-    for _, d in ipairs(root:GetDescendants()) do hook(d) end
-    root.DescendantAdded:Connect(hook)
-end
+-- Todo el juego: cualquier contenedor donde tengas remotos.
+for _, d in ipairs(game:GetDescendants()) do hook(d) end
+game.DescendantAdded:Connect(hook)
 
 -- RemoteFunction: envuelve TU función para registrarla.
 _G.GOYDiag = {
@@ -1827,7 +2141,7 @@ _G.GOYDiag = {
     end,
 }
 
--- Métricas del servidor (solo visibles en el servidor / feed autorizado).
+-- Métricas del servidor (consola del servidor + feed autorizado).
 task.spawn(function()
     local frames, start = 0, os.clock()
     RunService.Heartbeat:Connect(function() frames += 1 end)
@@ -1837,13 +2151,21 @@ task.spawn(function()
         local hz = frames / (now - start)
         frames, start = 0, now
         local mem = Stats:GetTotalMemoryUsageMb()
-        local msg = ("Heartbeat %.1f Hz · memoria servidor %.0f MB · jugadores %d"):format(hz, mem, #Players:GetPlayers())
+        local parts = {("Heartbeat %.1f Hz"):format(hz), ("memoria %.0f MB"):format(mem), ("jugadores %d"):format(#Players:GetPlayers())}
+        pcall(function() table.insert(parts, ("scripts %.0f MB"):format(Stats:GetMemoryUsageMbForTag(Enum.DeveloperMemoryTag.Script))) end)
+        pcall(function() table.insert(parts, ("red ↓%.1f ↑%.1f KB/s"):format(Stats.DataReceiveKbps, Stats.DataSendKbps)) end)
+        pcall(function()
+            table.insert(parts, ("DataStore GET %d / SET %d"):format(
+                DataStoreService:GetRequestBudgetForRequestType(Enum.DataStoreRequestType.GetAsync),
+                DataStoreService:GetRequestBudgetForRequestType(Enum.DataStoreRequestType.SetIncrementAsync)))
+        end)
+        local msg = table.concat(parts, " · ")
         if CONFIG.PRINT then print("[GOY DIAG] " .. msg) end
         sendFeed("ServerStats", msg)
     end
 end)
 
-print("[GOY DIAG] Instrumentación de servidor activa.")
+print("[GOY DIAG] Instrumentación de servidor v1.1 activa.")
 ]==]
 
 ---------------------------------------------------------------- ARRANQUE
@@ -1862,6 +2184,6 @@ end
 onCharacter(LP.Character)
 U.conn(LP.CharacterAdded, onCharacter)
 G.UI, G.REG, G.LOG, G.PERF, G.CAP = UI, REG, LOG, PERF, CAP -- acceso de solo lectura para depurar
-UI.setTab("MAIN")
+UI.setTab(UI.pages[CFG.get("tab", "MAIN")] and CFG.get("tab", "MAIN") or "MAIN")
 LOG.add("Sistema", "GOY Diagnostics", "", "", nil, "Iniciado · ejecutor " .. CAP.executor .. " · solo lectura")
 task.spawn(initialScan)
