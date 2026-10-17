@@ -121,4 +121,9 @@ function G.destroy()
     pcall(function() screen:Destroy() end)
     if ENV.GOY_DIAG == G then ENV.GOY_DIAG = nil end
 end
+-- Reinicia todo el panel (lo usa el cambio de versión Móvil / PC).
+function G.restart()
+    G.destroy()
+    task.defer(START)
+end
 U.conn(screen.AncestryChanged, function() if not screen.Parent then G.destroy() end end, "GUI eliminada")
