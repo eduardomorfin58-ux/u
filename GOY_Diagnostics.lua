@@ -1,6 +1,6 @@
 --[[
 ================================================================================
- GOY DIAGNOSTICS v1.2  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
+ GOY DIAGNOSTICS v1.2 Pro  ·  Diagnóstico de remotos y servidor (SOLO LECTURA)
  Cliente Roblox · optimizado para iPhone + Delta
 --------------------------------------------------------------------------------
  QUÉ HACE (desde el cliente, sin tocar el juego):
@@ -28,6 +28,12 @@
    8 PERF · 9 UI · 10 PESTAÑAS · 11 BUCLE (+arranque) · 12 LIMPIEZA · 13 STUDIO
 --------------------------------------------------------------------------------
  CAMBIOS
+ v1.2 Pro · Interfaz rehecha según el diseño "GOY Diagnostics v1.2 Pro": panel
+        de 1040 × 1163 con barra de título, lateral (pestañas con contadores,
+        Jugadores, Modo, ejecutor), 6 tarjetas de métricas con mini gráficas,
+        búsqueda, chips, tabla de eventos, remotos/jugadores más activos,
+        gráfica de eventos/s, detalle del evento, feed del servidor y barra de
+        estado. Escalas exactas 65 % y 100 %; si no cabe, se recorre con un dedo.
  v1.2 · Feed del servidor estructurado (tipo, remoto, jugador, userId, args,
         tipos) con límite propio de 60/s · botón JUGADORES (Todos / Solo yo /
         Elegir…) filtrado en el servidor por GOY_DiagMode y también en el
@@ -50,7 +56,7 @@
 -- 1. CONFIG — todas las constantes en un solo lugar
 -------------------------------------------------------------------------------
 local CONFIG = {
-    VERSION = "1.2",
+    VERSION = "1.2 Pro",
 
     -- Registro
     LOG_MAX = 700,                 -- entradas en el búfer circular
@@ -88,28 +94,42 @@ local CONFIG = {
     MODES = {
         -- id, etiqueta, filtro de categorías, solo alertas, dibuja, multiplicador de refresco,
         -- muestreo de métricas (s), máximo de filas, gráfica, captura
-        {id = "normal",  label = "Normal",        tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "server",  label = "Solo servidor", cats = {Servidor = true}, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "alerts",  label = "Alertas",       alertsOnly = true, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "changes", label = "Cambios",       cats = {Valor = true, Cambio = true, Tool = true}, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "capture", label = "Captura",       capture = true, tickMul = 1, sampleEvery = 1, graph = true},
-        {id = "saver",   label = "Ahorro",        tickMul = 3, sampleEvery = 2, maxRows = 60, graph = false},
-        {id = "silent",  label = "Silencioso",    silent = true, tickMul = 3, sampleEvery = 2, graph = false},
+        {id = "normal",  label = "Normal", desc = "Todo el registro, como siempre",        tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "server",  label = "Solo servidor", desc = "Solo el feed y ServerStats", cats = {Servidor = true}, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "alerts",  label = "Alertas", desc = "Spam, errores, ping alto, FPS bajo",       alertsOnly = true, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "changes", label = "Cambios", desc = "Valores, atributos, tools, personaje",       cats = {Valor = true, Cambio = true, Tool = true}, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "capture", label = "Captura", desc = "Graba 30 s y resume",       capture = true, tickMul = 1, sampleEvery = 1, graph = true},
+        {id = "saver",   label = "Ahorro", desc = "Menos refresco, menos batería",        tickMul = 3, sampleEvery = 2, maxRows = 60, graph = false},
+        {id = "silent",  label = "Silencioso", desc = "No dibuja hasta que haya alerta",    silent = true, tickMul = 3, sampleEvery = 2, graph = false},
     },
 
-    -- Interfaz
-    TOUCH = 44,                    -- alto mínimo táctil (px)
-    HEADER_H = 52, TAB_BAR_H = 46, TOOLBAR_H = 48, FOOTER_H = 20, GAP = 4, MARGIN = 8,
-    TAB_W = 96, TAB_W_WIDE = 122,
-    ROW_H = 56, ROW_GAP = 5, ROW_SPARE = 3,
-    FAB_SIZE = 60,
-    PANEL_MIN_W = 300, PANEL_MIN_H = 240, PANEL_VP_W = 0.92, PANEL_VP_H = 0.86, SCREEN_PAD = 8,
+    -- Interfaz: medidas exactas del diseño (unidades del diseño; UIScale aplica 65 % o 100 %)
+    SCALES = {0.65, 1},
+    L = {
+        PANEL_W = 1040, PANEL_H = 1163, RADIUS = 10,
+        TITLE_H = 41, STATUS_H = 27, SIDEBAR_W = 183,
+        MAIN_X = 198, MAIN_W = 586.5, RIGHT_X = 799, RIGHT_W = 226, TOP = 56,
+        METRIC_W = 137.5, METRIC_H = 88, METRIC_GAP = 11.5,
+        WIDE_Y = 154.5, WIDE_W = 288, WIDE_H = 71.5,
+        SEARCH_Y = 237.5, SEARCH_H = 29.5, SEARCH_W = 325, BTN_GAP = 8,
+        CHIPS_Y = 279.5, CHIP_H = 22, CHIP_GAP = 5.3,
+        TABLE_Y = 312.5, TABLE_H = 490, TABLE_HEAD = 28, ROW_H = 30.8, ROW_SPARE = 3,
+        CARDS_Y = 814.5, CARDS_H = 174.5, CARD_W = 288.5,
+        CHART_Y = 998.5, CHART_H = 122.5, CHART_BARS = 30, CHART_SECONDS = 60,
+        DETAIL_H = 321.5, FEED_Y = 388.5, FEED_H = 134.5, NOTE_Y = 534.5, NOTE_H = 64.5,
+        SIDE_X = 12, SIDE_W = 161, TAB_Y0 = 76, TAB_STEP = 30, TAB_H = 26,
+        PLAYERS_LABEL_Y = 268, SEG_Y = 287, SEG_H = 27,
+        MODE_LABEL_Y = 364, MODE_Y0 = 383, MODE_STEP = 43.6, MODE_H = 38,
+        INFO_Y = 1037.3, INFO_H = 83.4, INFO_STEP = 17.3,
+        FAB = 60, SPARK_POINTS = 14,
+    },
     DRAG_THRESHOLD = 8,
-    SCALES = {0.65, 0.85, 1, 1.15, 1.3},
     DETAIL_CHUNK = 2500, DETAIL_MAX = 60000,
     TOAST_SEC = 2.6,
-    PERF_HISTORY = 30,             -- segundos de la gráfica de FPS
+    PERF_HISTORY = 30,             -- segundos de historial de las mini gráficas
     MAIN_RECENT = 5,               -- eventos recientes en MAIN
+    FEED_VIEWER_LIMIT = 120,       -- reflejo de los límites del script de Studio (solo para mostrar)
+    FEED_SENDER_LIMIT = 30,
 
     -- Refresco
     TICK = 0.35,                   -- periodo del bucle (s)
@@ -282,7 +302,7 @@ NECESITA ROBLOX STUDIO O ACCESO AL SERVIDOR
 -- Mensajes de registro, ubicaciones, direcciones, detalle y rendimiento
 STR.LOC = {PLAYER_GUI = "Tu PlayerGui", BACKPACK = "Tu Backpack", PLAYER = "Tu jugador", OUTSIDE = "fuera", IN_BACKPACK = "en Backpack", IN = "en %s"}
 STR.DIR = {S2C = "Servidor → Cliente", LOCAL = "Local", REPLICATED = "Replicado", REPLICATED_VALUE = "Servidor → Cliente (replicado)",
-    OBSERVED = "Observado", GUI = "Interfaz local", CONSOLE = "Consola del cliente", C2S = "Cliente → Servidor (%s)",
+    OBSERVED = "Observado", GUI = "Interfaz local", CONSOLE = "Consola del cliente", C2S = "Cliente → Servidor",
     SERVER_NOTICE = "Aviso del servidor", SERVER_STATS = "Métricas del servidor"}
 STR.MSG = {
     NEW_REMOTE = "Nuevo %s en %s", REMOVED = "%s eliminado: %s", NEW_INST = "Nueva %s en %s", INST_RATE = "instancias nuevas en %s",
@@ -331,6 +351,42 @@ STR.PERF = {
     T_NET = "Red: recibe %s · envía %s", T_MEM = "Memoria cliente: %s · scripts %s · montón Lua %s", T_INST = "Instancias (Stats): %s",
     T_SERVER = "Servidor: %s", T_CONSOLE = "Consola: %d errores · %d advertencias",
     T_MONITOR = "Monitor: %d conexiones · render %.2f ms · %.1f actualizaciones/s · modo %s", T_LOGS = "Registros: %d · %.1f/s · errores internos %d",
+}
+
+-- Textos del diseño "Pro" (barra de título, laterales, tarjetas, tabla y barra de estado)
+STR.UI = {
+    TITLE = '<font color="#00DCFF"><b>GOY</b></font><b> DIAGNOSTICS</b><font color="#8C96AF"> v%s · solo lectura</font>',
+    FEED_PILL = 'Feed del servidor · protocolo 2 · confirmado <b>%s</b>',
+    FEED_PILL_PENDING = 'Feed del servidor · protocolo 2 · pidiendo <b>%s</b>',
+    FEED_PILL_NONE = 'Sin feed del servidor (juego sin tu script)',
+    SCALE = "Escala %d%%", MIN = "—", CLOSE = "✕",
+    SIDE_TABS = "Pestañas", SIDE_PLAYERS = "Jugadores", SIDE_MODE = "Modo",
+    SEG = {"Todos", "Solo yo", "Elegir…"},
+    PLAYERS_NOTE = "El filtro se aplica en el servidor y también en el cliente.",
+    INFO = {"Ejecutor", "Copiar", "Archivos", "Config guardada"},
+    M_FPS = "FPS", M_PING = "Ping", M_MEM = "Memoria", M_NET = "Red", M_EPS = "Eventos por s", M_CONSOLE = "Consola",
+    M_FPS_SUB = "frame %s · máx %s", M_MEM_SUB = "scripts %s · Lua %s", M_NET_SUB = "envía %s", M_EPS_SUB = "spam no guardado %d",
+    M_CONSOLE_VAL = "%d err", M_CONSOLE_SUB = "%d advertencias",
+    SEARCH_LOGS = "Buscar jugador, remoto o argumento", SEARCH_GENERIC = "Buscar…",
+    CHIPS_LOGS = {"Todas", "Servidor", "Remote", "Spam", "Valor", "Tool", "Consola", "Cambio", "Botón"},
+    COUNT = "%d de %d eventos", COUNT_ITEMS = "%d elementos",
+    COLS_LOGS = {"Hora", "Categoría", "Jugador", "Evento", "Argumentos", "Tipos"},
+    TOP_REMOTES = "Remotos más activos", TOP_PLAYERS = "Jugadores más activos",
+    TOP_PLAYER_ROW = "%d ev · pico %d/s", FEED_LIMIT_NOTE = "Límite del feed: %d mensajes/s por emisor, %d/s en total.",
+    NO_DATA = "Sin datos todavía", NO_PLAYERS = "Sin datos del servidor (requiere tu script de Studio)",
+    CHART = "Eventos por segundo · últimos %d s", CHART_PEAK = "pico %d/s", AXIS = {"−60 s", "−30 s", "ahora"},
+    DETAIL = "Detalle del evento", DETAIL_ITEM = "Detalle", NO_SELECTION = "Toca una fila para ver su detalle",
+    D_TIME = "Hora", D_PLAYER = "Jugador", D_DIR = "Dirección", D_COUNT = "Recibidos", D_ROUTE = "Ruta", D_ARGS = "Argumentos", D_TYPES = "Tipos",
+    D_COPY = "Copiar", D_WATCH = "Vigilar", D_UNWATCH = "No vigilar", D_INSPECT = "Inspeccionar", D_NO_INST = "Ese objeto no está en tu cliente",
+    FEED_CARD = "Feed del servidor", FEED_BUDGET = "Presupuesto total", FEED_SENDER = "%s · por emisor", FEED_SENDER_NONE = "Por emisor",
+    FEED_PER_S = "%d / %d por s", FEED_DROPPED = "Descartados (aviso)", FEED_MODE = "GOY_DiagMode",
+    NOTE = "Solo lectura. El cliente no ve lo que envía con FireServer ni InvokeServer; esa parte la registra tu script de Studio en el servidor.",
+    ST_LIVE = "EN VIVO", ST_PAUSED = "EN PAUSA", ST_REMOTES = "remotos %d", ST_LOGS = "registros %s", ST_SPAM = "spam no guardado %d",
+    ST_QUEUE = "cola %d (pico %d)", ST_ERRORS = "errores internos %d", ST_MODE = "Modo %s", ST_FPS = "FPS %.0f", ST_PING = "ping %s", ST_VER = "v%s",
+    COLS_MAIN = {"Elemento", "Valor"}, COLS_REMOTES = {"Nombre", "Clase", "Ubicación", "Recibidos", "Último", "Ruta"},
+    COLS_TOOLS = {"Nombre", "Estado", "Dueño / lugar", "Detalle"}, COLS_BUTTONS = {"Texto", "Nombre", "Estado", "Clics", "Ruta"},
+    COLS_PERF = {"Métrica", "Valor", "Detalle"},
+    BACK = "Volver", D_LOC = "Ubicación", D_TEXT = "Texto", NOT_OBS = "no observable",
 }
 
 local ENV = (type(getgenv) == "function" and getgenv()) or _G
@@ -1087,10 +1143,10 @@ end
 
 local FEED_KINDS = {
     OnServerEvent = function(m)
-        return "Servidor", shortName(m.remote), string.format(STR.DIR.C2S, m.kind), false
+        return "Servidor", shortName(m.remote), STR.DIR.C2S, false
     end,
     OnServerInvoke = function(m)
-        return "Servidor", shortName(m.remote), string.format(STR.DIR.C2S, m.kind), false
+        return "Servidor", shortName(m.remote), STR.DIR.C2S, false
     end,
     Spam = function(m)
         return "Servidor", string.format(STR.MSG.SPAM, shortName(m.remote)), STR.DIR.SERVER_NOTICE, true
@@ -1119,11 +1175,36 @@ function FEED.onMessage(e, ...)
     local isControl = m.kind == "Mode" or m.kind == "Dropped"
     if not isControl and not RATE.ok(e, STR.MSG.FEED_RATE, CONFIG.RATE_FEED) then return end
     if m.userId then FEED.names[m.userId] = m.player end
+    if m.kind == "OnServerEvent" or m.kind == "OnServerInvoke" then FEED.count(m) end
     local cat, name, dir, alert = "Servidor", m.kind, "", false
     if handler then cat, name, dir, alert = handler(m) end
     local extra = m.msg or (m.reason and tostring(m.reason)) or (m.count and string.format(STR.MSG.FEED_DROPPED_N, tostring(m.count))) or ""
     LOG.add(cat, name, dir, m.args and tostring(m.args) or "", m.types and tostring(m.types) or "", extra,
         {kind = m.kind, player = m.player, userId = m.userId, remote = m.remote, alert = alert})
+end
+
+-- Contadores para "Remotos / Jugadores más activos" y el presupuesto por segundo.
+FEED.byRemote, FEED.byPlayer, FEED.sec = {}, {}, {start = os.clock(), total = 0, bySender = {}, lastTotal = 0, lastTop = 0, lastTopName = nil}
+function FEED.count(m)
+    local name = shortName(m.remote)
+    FEED.byRemote[name] = (FEED.byRemote[name] or 0) + 1
+    local now = os.clock()
+    local sec = FEED.sec
+    if now - sec.start >= 1 then
+        local top, topName = 0, nil
+        for n, c in pairs(sec.bySender) do if c > top then top, topName = c, n end end
+        sec.lastTotal, sec.lastTop, sec.lastTopName = sec.total, top, topName
+        sec.start, sec.total, sec.bySender = now, 0, {}
+    end
+    sec.total = sec.total + 1
+    if m.player then
+        sec.bySender[m.player] = (sec.bySender[m.player] or 0) + 1
+        local p = FEED.byPlayer[m.player] or {count = 0, peak = 0, winStart = now, win = 0}
+        if now - p.winStart >= 1 then p.winStart, p.win = now, 0 end
+        p.count, p.win = p.count + 1, p.win + 1
+        if p.win > p.peak then p.peak = p.win end
+        FEED.byPlayer[m.player] = p
+    end
 end
 
 REG.specials[CONFIG.FEED_REMOTE] = function(e, inst)
@@ -1376,7 +1457,28 @@ function PERF.sample()
         PERF.logRate = math.max(0, LOG.total - PERF.logWinTotal) / (now - PERF.logWinStart)
         PERF.logWinTotal, PERF.logWinStart = LOG.total, now
     end
+    PERF.push("pingHist", PERF.ping or 0)
+    PERF.push("memHist", PERF.mem or 0)
+    PERF.push("netHist", PERF.recv or 0)
+    PERF.push("consoleHist", CONSOLE.errors + CONSOLE.warnings)
     checkPerfAlerts(now)
+end
+
+-- Historiales para mini gráficas y la gráfica de eventos/s.
+function PERF.push(key, v)
+    local h = PERF[key]
+    if not h then h = {}; PERF[key] = h end
+    h[#h + 1] = v
+    if #h > CONFIG.PERF_HISTORY then table.remove(h, 1) end
+end
+PERF.eps, PERF.epsWin, PERF.epsLast, PERF.epsNow = {}, os.clock(), 0, 0
+function PERF.tickEvents(now)
+    if now - PERF.epsWin < 1 then return end
+    local total = LOG.total + LOG.suppressed + LOG.droppedPaused
+    PERF.epsNow = math.max(0, total - PERF.epsLast) / (now - PERF.epsWin)
+    PERF.epsLast, PERF.epsWin = total, now
+    PERF.eps[#PERF.eps + 1] = PERF.epsNow
+    if #PERF.eps > CONFIG.L.CHART_SECONDS then table.remove(PERF.eps, 1) end
 end
 
 function PERF.due(now)
@@ -1384,23 +1486,57 @@ function PERF.due(now)
 end
 
 -------------------------------------------------------------------------------
--- 9. UI — componentes (tema, panel, arrastre, lista virtual, detalle, selector)
+-- 9. UI — componentes del diseño "Pro" (medidas exactas en CONFIG.L)
 -------------------------------------------------------------------------------
+local L = CONFIG.L
 local TH = {
-    bg = Color3.fromRGB(10, 12, 20), panel = Color3.fromRGB(16, 18, 30), card = Color3.fromRGB(22, 25, 42),
-    card2 = Color3.fromRGB(28, 31, 52), line = Color3.fromRGB(45, 50, 80),
-    cyan = Color3.fromRGB(0, 220, 255), violet = Color3.fromRGB(150, 90, 255),
-    text = Color3.fromRGB(226, 232, 245), dim = Color3.fromRGB(140, 150, 175),
-    ok = Color3.fromRGB(70, 230, 140), warn = Color3.fromRGB(255, 200, 70), bad = Color3.fromRGB(255, 90, 110),
+    outside = Color3.fromRGB(5, 6, 11), bg = Color3.fromRGB(9, 12, 19), bar = Color3.fromRGB(16, 18, 31),
+    side = Color3.fromRGB(12, 14, 27), card = Color3.fromRGB(21, 24, 40), border = Color3.fromRGB(42, 46, 70),
+    line = Color3.fromRGB(32, 36, 56), rowA = Color3.fromRGB(16, 18, 31), rowB = Color3.fromRGB(18, 21, 36),
+    head = Color3.fromRGB(13, 15, 27), sel = Color3.fromRGB(27, 32, 54), chip = Color3.fromRGB(22, 27, 46),
+    chipOn = Color3.fromRGB(10, 42, 54), segOn = Color3.fromRGB(18, 58, 74), track = Color3.fromRGB(9, 12, 21),
+    code = Color3.fromRGB(9, 12, 19),
+    cyan = Color3.fromRGB(0, 220, 255), violet = Color3.fromRGB(166, 115, 255), text = Color3.fromRGB(226, 232, 245),
+    dim = Color3.fromRGB(140, 150, 175), faint = Color3.fromRGB(94, 102, 128), ok = Color3.fromRGB(70, 230, 140),
+    warn = Color3.fromRGB(255, 200, 70), bad = Color3.fromRGB(255, 90, 110), blue = Color3.fromRGB(111, 168, 255),
+    pink = Color3.fromRGB(255, 122, 217), dotOff = Color3.fromRGB(60, 64, 96),
+    red = Color3.fromRGB(255, 95, 87), yellow = Color3.fromRGB(254, 188, 46), green = Color3.fromRGB(40, 200, 64),
+    btnRed = Color3.fromRGB(46, 15, 33), btnGreen = Color3.fromRGB(14, 38, 30), btnViolet = Color3.fromRGB(30, 22, 52),
 }
 local HEX = {cyan = "#00DCFF", violet = "#A673FF", dim = "#8C96AF", ok = "#46E68C", warn = "#FFC846",
     bad = "#FF5A6E", text = "#E2E8F5", pink = "#FF7AD9", blue = "#6FA8FF"}
-local CLASS_HEX = {RemoteEvent = HEX.cyan, UnreliableRemoteEvent = HEX.blue, RemoteFunction = HEX.violet,
-    BindableEvent = HEX.ok, BindableFunction = HEX.pink}
-local CAT_HEX = {Remote = HEX.cyan, Bindable = HEX.ok, Tool = HEX.warn, Instancia = HEX.dim, Cambio = HEX.pink,
-    Valor = HEX.blue, ["Botón"] = HEX.violet, Consola = HEX.bad, Servidor = HEX.ok, Sistema = HEX.text}
+-- Insignias de categoría: color del texto y del fondo.
+local CAT_STYLE = {
+    Servidor = {TH.ok, Color3.fromRGB(20, 52, 38)}, Remote = {TH.cyan, Color3.fromRGB(8, 46, 60)},
+    Spam = {TH.warn, Color3.fromRGB(56, 44, 16)}, Valor = {TH.blue, Color3.fromRGB(24, 38, 68)},
+    Tool = {TH.warn, Color3.fromRGB(56, 44, 16)}, Consola = {TH.bad, Color3.fromRGB(58, 20, 32)},
+    Cambio = {TH.pink, Color3.fromRGB(58, 24, 56)}, ["Botón"] = {TH.violet, Color3.fromRGB(40, 30, 74)},
+    Bindable = {TH.ok, Color3.fromRGB(20, 52, 38)}, Instancia = {TH.dim, Color3.fromRGB(30, 34, 52)},
+    Sistema = {TH.text, Color3.fromRGB(34, 38, 58)},
+    RemoteEvent = {TH.cyan, Color3.fromRGB(8, 46, 60)}, UnreliableRemoteEvent = {TH.blue, Color3.fromRGB(24, 38, 68)},
+    RemoteFunction = {TH.violet, Color3.fromRGB(40, 30, 74)}, BindableEvent = {TH.ok, Color3.fromRGB(20, 52, 38)},
+    BindableFunction = {TH.pink, Color3.fromRGB(58, 24, 56)},
+}
+local BAR_COLORS = {TH.cyan, TH.ok, TH.violet, TH.blue, TH.pink}
+local PLAYER_COLORS = {TH.warn, TH.ok, TH.cyan}
 
-local UI = {tab = "MAIN", open = false, pages = {}, lists = {}, force = false, collapsed = false, controls = {}}
+local UI = {tab = "LOGS", open = false, pages = {}, lists = {}, force = false, collapsed = false, controls = {}, sel = nil}
+
+---------------- Fuentes: BuilderSans + RobotoMono (si existen), si no Gotham/Code
+local FONT = {}
+do
+    local function face(family, weight)
+        local ok, f = pcall(function() return Font.new("rbxasset://fonts/families/" .. family .. ".json", weight) end)
+        return ok and f or nil
+    end
+    local W = Enum.FontWeight
+    FONT.sans = {face("BuilderSans", W.Regular), Enum.Font.Gotham}
+    FONT.med = {face("BuilderSans", W.Medium), Enum.Font.GothamMedium}
+    FONT.semi = {face("BuilderSans", W.SemiBold), Enum.Font.GothamMedium}
+    FONT.bold = {face("BuilderSans", W.Bold), Enum.Font.GothamBold}
+    FONT.mono = {face("RobotoMono", W.Regular), Enum.Font.Code}
+    FONT.monoMed = {face("RobotoMono", W.Medium), Enum.Font.Code}
+end
 
 local function mk(class, props, parent)
     local o = Instance.new(class)
@@ -1408,30 +1544,126 @@ local function mk(class, props, parent)
     if parent then o.Parent = parent end
     return o
 end
-local function corner(o, r) return mk("UICorner", {CornerRadius = UDim.new(0, r or 8)}, o) end
-local function stroke(o, c, t, tr) return mk("UIStroke", {Color = c or TH.line, Thickness = t or 1, Transparency = tr or 0}, o) end
-local function pad(o, p) return mk("UIPadding", {PaddingLeft = UDim.new(0, p), PaddingRight = UDim.new(0, p), PaddingTop = UDim.new(0, p), PaddingBottom = UDim.new(0, p)}, o) end
+local function corner(o, r) return mk("UICorner", {CornerRadius = UDim.new(0, r or 6)}, o) end
+local function stroke(o, c, t) return mk("UIStroke", {Color = c or TH.border, Thickness = t or 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, o) end
+local function setFont(o, f)
+    if f[1] then pcall(function() o.FontFace = f[1] end) else o.Font = f[2] end
+end
 local function rich(hex, s) return '<font color="' .. hex .. '">' .. U.esc(s) .. '</font>' end
-local function hexColor(hex, fallback) return (Color3.fromHex and Color3.fromHex(hex)) or fallback or TH.cyan end
-local function isPress(input)
-    local t = input.UserInputType
-    return t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseButton1
-end
-local function isMove(input)
-    local t = input.UserInputType
-    return t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseMovement
-end
-local function onRelease(input, fn)
-    local c
-    c = input.Changed:Connect(function()
-        if input.UserInputState == Enum.UserInputState.End then
-            if c then c:Disconnect() end
-            fn()
-        end
-    end)
+
+-- Marco con fondo, radio y borde opcionales. Coordenadas en unidades del diseño.
+local function box(parent, x, y, w, h, color, radius, border, z)
+    local f = mk("Frame", {Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = color or TH.card,
+        BackgroundTransparency = color and 0 or 1, BorderSizePixel = 0, ZIndex = z or 12}, parent)
+    if radius then corner(f, radius) end
+    if border then stroke(f, border) end
+    return f
 end
 
----------------- Padre de la GUI: gethui → CoreGui → PlayerGui
+-- Texto: o = {x, y, w, h, text, size, font, color, align ("L","R","C"), rich, wrap, z, mono}
+local function label(parent, o)
+    local t = mk("TextLabel", {Position = UDim2.fromOffset(o.x or 0, o.y or 0), Size = UDim2.fromOffset(o.w or 100, o.h or 14),
+        BackgroundTransparency = 1, Text = o.text or "", TextSize = o.size or 10.5, TextColor3 = o.color or TH.text,
+        RichText = o.rich or false, TextWrapped = o.wrap or false, ZIndex = o.z or 13,
+        TextXAlignment = (o.align == "R" and Enum.TextXAlignment.Right) or (o.align == "C" and Enum.TextXAlignment.Center) or Enum.TextXAlignment.Left,
+        TextYAlignment = o.top and Enum.TextYAlignment.Top or Enum.TextYAlignment.Center,
+        TextTruncate = o.wrap and Enum.TextTruncate.None or Enum.TextTruncate.AtEnd}, parent)
+    setFont(t, o.font or FONT.sans)
+    return t
+end
+
+-- Botón con estilo de la foto (fondo, borde, texto de color).
+local function button(parent, x, y, w, h, text, fg, bg, onTap, size, font)
+    local b = mk("TextButton", {Position = UDim2.fromOffset(x, y), Size = UDim2.fromOffset(w, h), BackgroundColor3 = bg or TH.chip,
+        Text = text, TextColor3 = fg or TH.text, TextSize = size or 11, AutoButtonColor = true, BorderSizePixel = 0, ZIndex = 14}, parent)
+    setFont(b, font or FONT.semi)
+    corner(b, 6)
+    stroke(b, TH.border)
+    if onTap then U.conn(b.Activated, function() onTap(b) end, "botón " .. tostring(text)) end
+    return b
+end
+
+-- Insignia de categoría.
+local function badge(parent, x, y, h, text, size)
+    local st = CAT_STYLE[text] or CAT_STYLE.Sistema
+    local f = box(parent, x, y, 10, h, st[2], 4, nil, 14)
+    f.AutomaticSize = Enum.AutomaticSize.X
+    mk("UIPadding", {PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6)}, f)
+    local t = label(f, {x = 0, y = 0, w = 0, h = h, text = text, size = size or 9.5, font = FONT.med, color = st[1], z = 15})
+    t.AutomaticSize = Enum.AutomaticSize.X
+    t.Size = UDim2.new(0, 0, 1, 0)
+    return f, t
+end
+local function setBadge(f, t, text)
+    local st = CAT_STYLE[text] or CAT_STYLE.Sistema
+    f.BackgroundColor3 = st[2]
+    t.Text = text
+    t.TextColor3 = st[1]
+end
+
+-- Línea entre dos puntos (para mini gráficas).
+local function segment(parent, color, z)
+    return mk("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = color, BorderSizePixel = 0, ZIndex = z or 14}, parent)
+end
+local function placeSegment(f, x1, y1, x2, y2, thick)
+    local dx, dy = x2 - x1, y2 - y1
+    local len = math.sqrt(dx * dx + dy * dy)
+    f.Position = UDim2.fromOffset((x1 + x2) / 2, (y1 + y2) / 2)
+    f.Size = UDim2.fromOffset(len + 0.6, thick or 1.4)
+    f.Rotation = math.deg((math.atan2 or math.atan)(dy, dx))
+end
+
+-- Mini gráfica de línea.
+function UI.spark(parent, x, y, w, h, color)
+    local holder = box(parent, x, y, w, h, nil, nil, nil, 13)
+    local S2 = {segs = {}, w = w, h = h}
+    for i = 1, L.SPARK_POINTS - 1 do S2.segs[i] = segment(holder, color, 14) end
+    function S2.set(values)
+        local n = #values
+        local first = math.max(1, n - L.SPARK_POINTS + 1)
+        local vmin, vmax = math.huge, -math.huge
+        for i = first, n do vmin = math.min(vmin, values[i]); vmax = math.max(vmax, values[i]) end
+        if vmax - vmin < 1e-6 then vmin, vmax = vmin - 1, vmax + 1 end
+        local pts = {}
+        for i = first, n do
+            local k = #pts
+            pts[k + 1] = {k * (w / (L.SPARK_POINTS - 1)), h - (values[i] - vmin) / (vmax - vmin) * h}
+        end
+        for i, s in ipairs(S2.segs) do
+            local a, b = pts[i], pts[i + 1]
+            s.Visible = a ~= nil and b ~= nil
+            if s.Visible then placeSegment(s, a[1], a[2], b[1], b[2]) end
+        end
+    end
+    return S2
+end
+
+-- Barra de progreso horizontal (fondo + relleno).
+local function progress(parent, x, y, w, h, color)
+    local track = box(parent, x, y, w, h, TH.track, h / 2, nil, 13)
+    local fill = box(track, 0, 0, 0, h, color, h / 2, nil, 14)
+    return function(frac)
+        frac = math.clamp(frac or 0, 0, 1)
+        fill.Size = UDim2.fromOffset(w * frac, h)
+        fill.Visible = frac > 0
+    end
+end
+
+-- Borde discontinuo (UIStroke no tiene guiones): segmentos cortos.
+local function dashedBorder(f, w, h, color, dash, gap)
+    dash, gap = dash or 4, gap or 3
+    local function run(x0, y0, len, horiz)
+        local p = 0
+        while p < len do
+            local d = math.min(dash, len - p)
+            box(f, horiz and (x0 + p) or x0, horiz and y0 or (y0 + p), horiz and d or 1, horiz and 1 or d, color, nil, nil, 13)
+            p = p + dash + gap
+        end
+    end
+    run(4, 0, w - 8, true); run(4, h - 1, w - 8, true); run(0, 4, h - 8, false); run(w - 1, 4, h - 8, false)
+end
+
+---------------- Pantalla, visor desplazable y panel
 local function guiParent()
     if CAP.gethui then
         local ok, h = pcall(CAP.gethui)
@@ -1445,7 +1677,6 @@ local function guiParent()
     if ok and S.CoreGui then return S.CoreGui end
     return LP:WaitForChild("PlayerGui")
 end
-
 local parentGui = guiParent()
 pcall(function()
     local old = parentGui:FindFirstChild("GOY_Diagnostics")
@@ -1453,7 +1684,7 @@ pcall(function()
 end)
 local screen = mk("ScreenGui", {Name = "GOY_Diagnostics", ResetOnSpawn = false, IgnoreGuiInset = true,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling, DisplayOrder = 999})
-pcall(function() screen.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets end) -- notch y barra inferior
+pcall(function() screen.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets end)
 REG.guiRoot = screen
 screen.Parent = parentGui
 
@@ -1465,269 +1696,420 @@ local function screenSize()
     return vp
 end
 
----------------- Geometría del panel (tamaño sin escala; la escala la aplica UIScale)
-local GEOM = {}
-GEOM.w = math.floor(math.clamp(CFG.get("w", vp.X * CONFIG.PANEL_VP_W), CONFIG.PANEL_MIN_W, math.max(CONFIG.PANEL_MIN_W, vp.X - CONFIG.SCREEN_PAD)))
-GEOM.h = math.floor(math.clamp(CFG.get("h", vp.Y * CONFIG.PANEL_VP_H), CONFIG.PANEL_MIN_H, math.max(CONFIG.PANEL_MIN_H, vp.Y - CONFIG.SCREEN_PAD)))
-GEOM.bodyTop = CONFIG.HEADER_H + CONFIG.GAP + CONFIG.TAB_BAR_H + CONFIG.GAP
-GEOM.bodyBottom = CONFIG.FOOTER_H + CONFIG.MARGIN
+-- Si el panel escalado no cabe en la pantalla, se recorre con un dedo (visor).
+local viewport = mk("ScrollingFrame", {Name = "Viewport", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 4, ScrollBarImageColor3 = TH.cyan, ScrollingDirection = Enum.ScrollingDirection.XY,
+    CanvasSize = UDim2.new(0, 0, 0, 0), ElasticBehavior = Enum.ElasticBehavior.Never, Visible = false, ZIndex = 9}, screen)
 
--- Mantiene un marco dentro de la pantalla (posición en píxeles).
-local function clampFrame(f)
-    pcall(function()
-        local ss, fs, p = screenSize(), f.AbsoluteSize, f.Position
-        local x = math.clamp(p.X.Offset + p.X.Scale * ss.X, 0, math.max(0, ss.X - fs.X))
-        local y = math.clamp(p.Y.Offset + p.Y.Scale * ss.Y, 0, math.max(0, ss.Y - fs.Y))
-        f.Position = UDim2.fromOffset(math.floor(x), math.floor(y))
-    end)
-end
-
----------------- Arrastre táctil
-local function draggable(handle, target, onTap, onEnd)
-    local dragging, startPos, startUD, moved = false, nil, nil, false
-    U.conn(handle.InputBegan, function(input)
-        if not isPress(input) then return end
-        dragging, moved = true, false
-        startPos, startUD = input.Position, target.Position
-        onRelease(input, function()
-            dragging = false
-            clampFrame(target)
-            if moved and onEnd then onEnd() end
-        end)
-    end, "arrastre inicio")
-    U.conn(S.UIS.InputChanged, function(input)
-        if not dragging or not isMove(input) then return end
-        local d = input.Position - startPos
-        if math.abs(d.X) + math.abs(d.Y) > CONFIG.DRAG_THRESHOLD then moved = true end
-        if moved then
-            target.Position = UDim2.new(startUD.X.Scale, startUD.X.Offset + d.X, startUD.Y.Scale, startUD.Y.Offset + d.Y)
-            clampFrame(target)
-        end
-    end, "arrastre")
-    if onTap then
-        U.conn(handle.Activated, function()
-            if not moved then onTap() end
-            moved = false
-        end, "toque")
-    end
-end
-
----------------- Botón flotante
-local fab = mk("TextButton", {Name = "Fab", Size = UDim2.fromOffset(CONFIG.FAB_SIZE, CONFIG.FAB_SIZE),
-    Position = UDim2.fromOffset(CFG.get("fabX", vp.X - CONFIG.FAB_SIZE - 16), CFG.get("fabY", math.floor(vp.Y * 0.3))),
-    BackgroundColor3 = TH.panel, Text = STR.FAB, TextColor3 = TH.text, Font = Enum.Font.GothamBlack, TextSize = 15,
-    AutoButtonColor = false, ZIndex = 50}, screen)
-corner(fab, CONFIG.FAB_SIZE / 2)
-stroke(fab, TH.cyan, 2)
-mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(0, 120, 160), Color3.fromRGB(90, 40, 170)), Rotation = 45}, fab)
-local fabDot = mk("Frame", {Size = UDim2.fromOffset(12, 12), Position = UDim2.new(1, -14, 0, 2), BackgroundColor3 = TH.ok, ZIndex = 51}, fab)
-corner(fabDot, 6)
-
----------------- Panel
-local panel = mk("Frame", {Name = "Panel", Size = UDim2.fromOffset(GEOM.w, GEOM.h),
-    Position = UDim2.fromOffset(CFG.get("x", math.floor((vp.X - GEOM.w) / 2)), CFG.get("y", math.floor((vp.Y - GEOM.h) / 2))),
-    BackgroundColor3 = TH.bg, Visible = false, ZIndex = 10, Active = true}, screen)
-corner(panel, 14)
-stroke(panel, TH.cyan, 1.5, 0.2)
-mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(255, 255, 255), Color3.fromRGB(205, 200, 255)), Rotation = 90}, panel)
+local panel = mk("Frame", {Name = "Panel", Size = UDim2.fromOffset(L.PANEL_W, L.PANEL_H), Position = UDim2.fromOffset(0, 0),
+    BackgroundColor3 = TH.bg, BorderSizePixel = 0, ZIndex = 10, Active = true}, viewport)
+corner(panel, L.RADIUS)
+stroke(panel, TH.border)
 local uiScale = mk("UIScale", {Scale = CFG.get("scale", 1)}, panel)
 function UI.scale() return (uiScale.Scale and uiScale.Scale > 0) and uiScale.Scale or 1 end
+if uiScale.Scale ~= CONFIG.SCALES[1] and uiScale.Scale ~= CONFIG.SCALES[2] then uiScale.Scale = 1 end
 
-local header = mk("TextButton", {Size = UDim2.new(1, 0, 0, CONFIG.HEADER_H), BackgroundColor3 = TH.panel, Text = "", AutoButtonColor = false, ZIndex = 11}, panel)
-corner(header, 14)
-mk("UIGradient", {Color = ColorSequence.new(Color3.fromRGB(0, 70, 95), Color3.fromRGB(55, 25, 105)), Rotation = 0}, header)
-local statusDot = mk("Frame", {Size = UDim2.fromOffset(10, 10), Position = UDim2.new(0, 12, 0.5, -5), BackgroundColor3 = TH.ok, ZIndex = 12}, header)
-corner(statusDot, 5)
-mk("TextLabel", {Size = UDim2.new(1, -(2 * CONFIG.TOUCH + 52), 1, 0), Position = UDim2.fromOffset(30, 0), BackgroundTransparency = 1,
-    RichText = true, Text = STR.TITLE, TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 14,
-    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 12}, header)
-local function headBtn(txt, slot, color)
-    local w = CONFIG.TOUCH + 2
-    local b = mk("TextButton", {Size = UDim2.fromOffset(w, CONFIG.TOUCH), Position = UDim2.new(1, -(w + 6) * slot, 0.5, -CONFIG.TOUCH / 2),
-        BackgroundColor3 = TH.card2, Text = txt, TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 16, ZIndex = 12}, header)
-    corner(b, 8)
-    return b
-end
-local closeBtn = headBtn(STR.CLOSE, 1, TH.bad)
-local minBtn = headBtn(STR.MIN, 2)
+---------------- Botón flotante
+local fab = mk("TextButton", {Name = "Fab", Size = UDim2.fromOffset(L.FAB, L.FAB),
+    Position = UDim2.fromOffset(CFG.get("fabX", vp.X - L.FAB - 16), CFG.get("fabY", math.floor(vp.Y * 0.3))),
+    BackgroundColor3 = TH.bar, Text = STR.FAB, TextColor3 = TH.text, TextSize = 15, AutoButtonColor = false, ZIndex = 50}, screen)
+setFont(fab, FONT.bold)
+corner(fab, L.FAB / 2)
+stroke(fab, TH.cyan, 2)
+local fabDot = box(fab, L.FAB - 14, 2, 12, 12, TH.ok, 6, nil, 51)
 
-local tabBar = mk("ScrollingFrame", {Size = UDim2.new(1, -2 * CONFIG.MARGIN, 0, CONFIG.TAB_BAR_H),
-    Position = UDim2.fromOffset(CONFIG.MARGIN, CONFIG.HEADER_H + CONFIG.GAP), BackgroundTransparency = 1,
-    ScrollBarThickness = 0, ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X,
-    CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 11}, panel)
-mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, tabBar)
+---------------- Barra de título
+local titleBar = mk("TextButton", {Size = UDim2.fromOffset(L.PANEL_W, L.TITLE_H), BackgroundColor3 = TH.bar, Text = "",
+    AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 11}, panel)
+corner(titleBar, L.RADIUS)
+box(titleBar, 0, L.TITLE_H - L.RADIUS, L.PANEL_W, L.RADIUS, TH.bar, nil, nil, 11)  -- esquinas inferiores rectas
+box(panel, 0, L.TITLE_H, L.PANEL_W, 1, TH.line, nil, nil, 12)
+for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 14.4 + (i - 1) * 13.75, 16.7, 8, 8, c, 4, nil, 13) end
+label(titleBar, {x = 62, y = 10, w = 420, h = 22, text = string.format(STR.UI.TITLE, "1.2"), rich = true, size = 13, font = FONT.sans})
+local W = {} -- widgets que se actualizan
+W.pill = box(titleBar, 649.7, 10, 233.3, 22, TH.bar, 11, TH.border, 12)
+W.pillDot = box(W.pill, 12, 8, 6, 6, TH.ok, 3, nil, 14)
+W.pillText = label(W.pill, {x = 23, y = 0, w = 206, h = 22, text = "", rich = true, size = 10, color = TH.dim})
+W.scaleBtn = button(titleBar, 896, 10, 69, 22, "", TH.dim, TH.bar, nil, 10, FONT.sans)
+local minBtn = button(titleBar, 970.8, 10, 24, 22, STR.UI.MIN, TH.dim, TH.bar, nil, 11, FONT.sans)
+local closeBtn = button(titleBar, 1000.7, 10, 24.6, 22, STR.UI.CLOSE, TH.bad, TH.bar, nil, 11, FONT.sans)
 
-local body = mk("Frame", {Size = UDim2.new(1, -2 * CONFIG.MARGIN, 1, -(GEOM.bodyTop + GEOM.bodyBottom)), Position = UDim2.fromOffset(CONFIG.MARGIN, GEOM.bodyTop),
-    BackgroundTransparency = 1, ClipsDescendants = true, ZIndex = 11}, panel)
-local footer = mk("TextLabel", {Size = UDim2.new(1, -(CONFIG.TOUCH + 16), 0, CONFIG.FOOTER_H), Position = UDim2.new(0, 10, 1, -(CONFIG.FOOTER_H + 4)),
-    BackgroundTransparency = 1, Text = "", RichText = true, TextColor3 = TH.dim, Font = Enum.Font.Gotham, TextSize = 11,
-    TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 11}, panel)
+---------------- Estructura: lateral, columnas y barra de estado
+local sidebar = box(panel, 0, L.TITLE_H + 1, L.SIDEBAR_W, L.PANEL_H - L.TITLE_H - L.STATUS_H - 1, TH.side, nil, nil, 11)
+box(panel, L.SIDEBAR_W, L.TITLE_H + 1, 1, L.PANEL_H - L.TITLE_H - L.STATUS_H - 1, TH.line, nil, nil, 12)
+local main = box(panel, L.MAIN_X, 0, L.MAIN_W, L.PANEL_H, nil, nil, nil, 11)
+local right = box(panel, L.RIGHT_X, 0, L.RIGHT_W, L.PANEL_H, nil, nil, nil, 11)
+local statusBar = box(panel, 0, L.PANEL_H - L.STATUS_H, L.PANEL_W, L.STATUS_H, TH.bar, L.RADIUS, nil, 11)
+box(statusBar, 0, 0, L.PANEL_W, L.RADIUS, TH.bar, nil, nil, 11)
+box(panel, 0, L.PANEL_H - L.STATUS_H, L.PANEL_W, 1, TH.line, nil, nil, 12)
 
 ---------------- Aviso breve
-local toastLbl = mk("TextLabel", {Size = UDim2.new(1, -40, 0, 30), Position = UDim2.new(0, 20, 1, -64), BackgroundColor3 = TH.card2,
-    TextColor3 = TH.text, Font = Enum.Font.GothamMedium, TextSize = 13, Visible = false, ZIndex = 40, TextWrapped = true}, panel)
-corner(toastLbl, 8)
-stroke(toastLbl, TH.violet, 1)
+local toast = label(panel, {x = L.MAIN_X + 60, y = L.PANEL_H - L.STATUS_H - 46, w = L.MAIN_W - 120, h = 30, text = "", size = 11, font = FONT.med, align = "C", z = 40, wrap = true})
+toast.BackgroundColor3 = TH.sel
+toast.BackgroundTransparency = 0
+toast.Visible = false
+corner(toast, 8)
+stroke(toast, TH.violet)
 local toastSeq = 0
 function UI.toast(msg)
     toastSeq = toastSeq + 1
     local my = toastSeq
-    toastLbl.Text = msg
-    toastLbl.Visible = true
-    task.delay(CONFIG.TOAST_SEC, function() if my == toastSeq then toastLbl.Visible = false end end)
+    toast.Text = msg
+    toast.Visible = true
+    task.delay(CONFIG.TOAST_SEC, function() if my == toastSeq then toast.Visible = false end end)
 end
 
----------------- Pestañas (marcos)
-local tabButtons = {}
-for i, name in ipairs(STR.TABS) do
-    local b = mk("TextButton", {Size = UDim2.fromOffset(name == "PERFORMANCE" and CONFIG.TAB_W_WIDE or CONFIG.TAB_W, CONFIG.TOUCH),
-        BackgroundColor3 = TH.card, Text = name, TextColor3 = TH.dim, Font = Enum.Font.GothamBold, TextSize = 12, LayoutOrder = i,
-        ZIndex = 12, AutoButtonColor = false}, tabBar)
-    corner(b, 9)
-    tabButtons[name] = b
-    UI.pages[name] = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false, ZIndex = 11}, body)
-end
-
----------------- Barra de herramientas
-function UI.toolbar(page)
-    local bar = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 0, CONFIG.TOOLBAR_H), BackgroundTransparency = 1, ScrollBarThickness = 0,
-        ScrollingDirection = Enum.ScrollingDirection.X, AutomaticCanvasSize = Enum.AutomaticSize.X, CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 12}, page)
-    mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder,
-        VerticalAlignment = Enum.VerticalAlignment.Center}, bar)
-    local tb = {bar = bar, n = 0}
-    function tb.search(placeholder, w)
-        tb.n = tb.n + 1
-        local box = mk("TextBox", {Size = UDim2.fromOffset(w or 150, CONFIG.TOUCH), BackgroundColor3 = TH.card, Text = "", PlaceholderText = placeholder,
-            PlaceholderColor3 = TH.dim, TextColor3 = TH.text, Font = Enum.Font.Gotham, TextSize = 13, ClearTextOnFocus = false,
-            TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = tb.n, ZIndex = 12}, bar)
-        corner(box, 8); stroke(box, TH.cyan, 1, 0.55); pad(box, 8)
-        return box
+---------------- Tabla virtual (cabecera + filas reutilizadas)
+-- cols = {{title=, x=, w=, kind="mono"|"badge"|"player"|"strong"|"text"|"dim"}}
+function UI.table(parent, x, y, w, h, cols)
+    local frame = box(parent, x, y, w, h, TH.rowA, 6, TH.border, 12)
+    frame.ClipsDescendants = true
+    local head = box(frame, 0, 0, w, L.TABLE_HEAD, TH.head, nil, nil, 13)
+    box(frame, 0, L.TABLE_HEAD, w, 1, TH.line, nil, nil, 14)
+    local T = {frame = frame, cols = cols, rows = {}, n = 0, get = nil, cache = {}, headLabels = {}}
+    for i, c in ipairs(cols) do
+        T.headLabels[i] = label(head, {x = c.x, y = 0, w = c.hw or c.w, h = L.TABLE_HEAD, text = c.title, size = 9.5, color = TH.dim, font = FONT.sans})
     end
-    function tb.button(text, fn, color, w)
-        tb.n = tb.n + 1
-        local b = mk("TextButton", {Size = UDim2.fromOffset(w or 78, CONFIG.TOUCH), BackgroundColor3 = TH.card2, Text = text,
-            TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 12, LayoutOrder = tb.n, ZIndex = 12}, bar)
-        corner(b, 8); stroke(b, TH.violet, 1, 0.6)
-        if fn then U.conn(b.Activated, function() fn(b) end, "botón " .. text) end
-        return b
-    end
-    return tb
-end
-
--- Botones que aparecen en varias pestañas (Modo, Jugadores): se re-etiquetan juntos.
-function UI.addControl(kind, button) UI.controls[#UI.controls + 1] = {kind = kind, b = button} end
-function UI.refreshControls(labels)
-    for _, c in ipairs(UI.controls) do
-        local txt = labels[c.kind]
-        if txt and c.b.Text ~= txt then c.b.Text = txt end
-    end
-end
-
----------------- Lista VIRTUAL: solo existen las filas visibles (+CONFIG.ROW_SPARE)
-function UI.list(parent, top)
-    local sf = mk("ScrollingFrame", {Size = UDim2.new(1, 0, 1, -top), Position = UDim2.fromOffset(0, top),
-        BackgroundColor3 = TH.panel, BackgroundTransparency = 0.15, ScrollBarThickness = 6, ScrollBarImageColor3 = TH.cyan,
-        AutomaticCanvasSize = Enum.AutomaticSize.None, CanvasSize = UDim2.new(0, 0, 0, 0), ScrollingDirection = Enum.ScrollingDirection.Y,
-        ElasticBehavior = Enum.ElasticBehavior.Always, ZIndex = 11}, parent)
-    corner(sf, 10)
-    local L = {sf = sf, rows = {}, n = 0, get = nil, cache = {}}
-    function L.item(i)
-        local it = L.cache[i]
-        if it == nil and L.get then
-            it = L.get(i)
-            L.cache[i] = it
+    local sf = mk("ScrollingFrame", {Position = UDim2.fromOffset(0, L.TABLE_HEAD + 1), Size = UDim2.fromOffset(w, h - L.TABLE_HEAD - 1),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = TH.cyan,
+        CanvasSize = UDim2.new(0, 0, 0, 0), ScrollingDirection = Enum.ScrollingDirection.Y, ZIndex = 13}, frame)
+    T.sf = sf
+    function T.setColumns(newCols)
+        T.cols = newCols
+        for i, lb in ipairs(T.headLabels) do
+            local c = newCols[i]
+            lb.Visible = c ~= nil
+            if c then lb.Text, lb.Position, lb.Size = c.title, UDim2.fromOffset(c.x, 0), UDim2.fromOffset(c.w, L.TABLE_HEAD) end
         end
+        for _, r in ipairs(T.rows) do r.btn:Destroy() end
+        T.rows = {}
+        T.draw()
+    end
+    function T.item(i)
+        local it = T.cache[i]
+        if it == nil and T.get then it = T.get(i); T.cache[i] = it end
         return it
     end
     local function makeRow(k)
-        local row = mk("TextButton", {Size = UDim2.new(1, -14, 0, CONFIG.ROW_H - CONFIG.ROW_GAP), BackgroundColor3 = TH.card, Text = "",
-            AutoButtonColor = true, ZIndex = 12, Visible = false}, sf)
-        corner(row, 8)
-        local bar = mk("Frame", {Size = UDim2.new(0, 3, 1, -14), Position = UDim2.fromOffset(5, 7), BackgroundColor3 = TH.cyan, BorderSizePixel = 0, ZIndex = 13}, row)
-        local t1 = mk("TextLabel", {Size = UDim2.new(1, -22, 0, 22), Position = UDim2.fromOffset(15, 5), BackgroundTransparency = 1, RichText = true,
-            TextColor3 = TH.text, Font = Enum.Font.GothamBold, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13}, row)
-        local t2 = mk("TextLabel", {Size = UDim2.new(1, -22, 0, 18), Position = UDim2.fromOffset(15, 28), BackgroundTransparency = 1, RichText = true,
-            TextColor3 = TH.dim, Font = Enum.Font.Code, TextSize = 11, TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 13}, row)
-        local r = {btn = row, bar = bar, t1 = t1, t2 = t2, idx = 0}
+        local row = mk("TextButton", {Size = UDim2.fromOffset(w, L.ROW_H), BackgroundColor3 = TH.rowA, Text = "", AutoButtonColor = false,
+            BorderSizePixel = 0, ZIndex = 13, Visible = false}, sf)
+        box(row, 0, L.ROW_H - 1, w, 1, TH.line, nil, nil, 14)
+        local r = {btn = row, cells = {}, idx = 0}
+        r.accent = box(row, 0, 0, 3, L.ROW_H, TH.ok, nil, nil, 15)
+        for ci, c in ipairs(T.cols) do
+            if c.kind == "badge" then
+                local f, t = badge(row, c.x, (L.ROW_H - 15) / 2, 15, "", 9.5)
+                r.cells[ci] = {badge = f, text = t}
+            else
+                local font = (c.kind == "mono" or c.kind == "dim") and FONT.mono or ((c.kind == "strong" or c.kind == "player") and FONT.med or FONT.sans)
+                r.cells[ci] = {text = label(row, {x = c.x, y = 0, w = c.w, h = L.ROW_H, size = c.kind == "mono" and 10 or 10.5, font = font,
+                    color = (c.kind == "mono" or c.kind == "dim") and TH.dim or (c.kind == "player" and TH.violet or TH.text), rich = c.rich})}
+            end
+        end
         U.conn(row.Activated, function()
-            local it = L.item(r.idx)
+            local it = T.item(r.idx)
             if it and it.onTap then it.onTap() end
+            UI.force = true
         end, "fila")
-        L.rows[k] = r
+        T.rows[k] = r
         return r
     end
-    local function viewHeight()
-        -- AbsoluteWindowSize está en píxeles de pantalla (ya escalados): se pasa a unidades de la lista.
-        local h = nil
-        pcall(function() h = sf.AbsoluteWindowSize.Y end)
-        if not h or h <= 0 then h = GEOM.h end
-        return h / UI.scale()
-    end
-    function L.draw()
+    local function viewHeight() return h - L.TABLE_HEAD - 1 end
+    function T.draw()
         local scrollY = 0
         pcall(function() scrollY = sf.CanvasPosition.Y end)
-        local first = math.max(1, math.floor(scrollY / CONFIG.ROW_H) + 1)
-        local need = math.ceil(viewHeight() / CONFIG.ROW_H) + CONFIG.ROW_SPARE
+        local first = math.max(1, math.floor(scrollY / L.ROW_H) + 1)
+        local need = math.ceil(viewHeight() / L.ROW_H) + L.ROW_SPARE
         for k = 1, need do
-            local r = L.rows[k] or makeRow(k)
+            local r = T.rows[k] or makeRow(k)
             local i = first + k - 1
-            if i <= L.n then
-                local it = L.item(i)
+            local it = i <= T.n and T.item(i) or nil
+            if it then
                 r.idx = i
-                r.btn.Position = UDim2.fromOffset(6, (i - 1) * CONFIG.ROW_H + 6)
+                r.btn.Position = UDim2.fromOffset(0, (i - 1) * L.ROW_H)
                 r.btn.Visible = true
-                if r.t1.Text ~= it.title then r.t1.Text = it.title end
-                local sub = it.sub or ""
-                if r.t2.Text ~= sub then r.t2.Text = sub end
-                r.bar.BackgroundColor3 = it.color or TH.cyan
+                r.btn.BackgroundColor3 = it.selected and TH.sel or ((i % 2 == 0) and TH.rowB or TH.rowA)
+                r.accent.Visible = it.selected or false
+                for ci, cell in ipairs(r.cells) do
+                    local v = it.cells[ci] or ""
+                    if cell.badge then
+                        cell.badge.Visible = v ~= ""
+                        if v ~= "" then setBadge(cell.badge, cell.text, v) end
+                    else
+                        if cell.text.Text ~= v then cell.text.Text = v end
+                        local c = it.colors and it.colors[ci]
+                        if c then cell.text.TextColor3 = c end
+                    end
+                end
             else
                 r.btn.Visible = false
                 r.idx = 0
             end
         end
-        for k = need + 1, #L.rows do L.rows[k].btn.Visible = false; L.rows[k].idx = 0 end
+        for k = need + 1, #T.rows do T.rows[k].btn.Visible = false; T.rows[k].idx = 0 end
     end
-    function L.setLazy(n, get)
+    function T.setLazy(n, get)
         local cap = MODE.def.maxRows
         if cap and n > cap then n = cap end
-        L.n, L.get, L.cache = n, get, {}
-        sf.CanvasSize = UDim2.new(0, 0, 0, n * CONFIG.ROW_H + 12)
-        L.draw()
+        T.n, T.get, T.cache = n, get, {}
+        sf.CanvasSize = UDim2.new(0, 0, 0, n * L.ROW_H)
+        T.draw()
     end
-    function L.set(items) L.setLazy(#items, function(i) return items[i] end) end
-    function L.all()
+    function T.set(items) T.setLazy(#items, function(i) return items[i] end) end
+    function T.all()
         local out = {}
-        for i = 1, L.n do out[#out + 1] = L.item(i) end
+        for i = 1, T.n do
+            local it = T.item(i)
+            out[#out + 1] = {title = table.concat(it.cells, " | "), sub = it.sub or "", onTap = it.onTap, item = it}
+        end
         return out
     end
-    U.conn(sf:GetPropertyChangedSignal("CanvasPosition"), L.draw, "scroll lista")
-    U.conn(sf:GetPropertyChangedSignal("AbsoluteWindowSize"), L.draw, "tamaño lista")
-    return L
+    U.conn(sf:GetPropertyChangedSignal("CanvasPosition"), T.draw, "scroll tabla")
+    return T
 end
 
----------------- Detalle (texto largo seleccionable, en bloques)
-local detail = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = TH.bg, Visible = false, ZIndex = 30, Active = true}, body)
-corner(detail, 10); stroke(detail, TH.violet, 1.2)
-local detailTitle = mk("TextLabel", {Size = UDim2.new(1, -262, 0, CONFIG.TOUCH), Position = UDim2.fromOffset(10, 3), BackgroundTransparency = 1, RichText = true,
-    TextColor3 = TH.cyan, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left,
-    TextTruncate = Enum.TextTruncate.AtEnd, ZIndex = 31}, detail)
-local function dBtn(txt, right, w, color)
-    local b = mk("TextButton", {Size = UDim2.fromOffset(w, CONFIG.TOUCH), Position = UDim2.new(1, -right, 0, 3), BackgroundColor3 = TH.card2, Text = txt,
-        TextColor3 = color or TH.text, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 31}, detail)
-    corner(b, 8)
-    return b
+---------------- Fila de chips
+function UI.chips(parent, x, y, labels, isOn, onPick, widths)
+    local C = {buttons = {}}
+    local cx = x
+    for i, text in ipairs(labels) do
+        local w = (widths and widths[i]) or (#text * 5.6 + 16)
+        local b = mk("TextButton", {Position = UDim2.fromOffset(cx, y), Size = UDim2.fromOffset(w, L.CHIP_H), BackgroundColor3 = TH.chip,
+            Text = text, TextColor3 = TH.dim, TextSize = 10.5, AutoButtonColor = true, BorderSizePixel = 0, ZIndex = 14}, parent)
+        setFont(b, FONT.med)
+        corner(b, L.CHIP_H / 2)
+        local st = stroke(b, TH.border)
+        C.buttons[i] = {b = b, st = st}
+        U.conn(b.Activated, function() onPick(i); C.refresh(); UI.force = true end, "chip " .. text)
+        cx = cx + w + L.CHIP_GAP
+    end
+    function C.refresh()
+        for i, it in ipairs(C.buttons) do
+            local on = isOn(i)
+            it.b.BackgroundColor3 = on and TH.chipOn or TH.chip
+            it.b.TextColor3 = on and TH.cyan or TH.dim
+            it.st.Color = on and TH.cyan or TH.border
+        end
+    end
+    C.refresh()
+    return C
 end
-local dClose = dBtn(STR.CLOSE_BTN, 76, 70, TH.bad)
-local dCopy = dBtn(STR.COPY, 152, 70, TH.cyan)
-local dExtra = dBtn("", 250, 92, TH.violet)
-local dScroll = mk("ScrollingFrame", {Size = UDim2.new(1, -12, 1, -(CONFIG.TOUCH + 12)), Position = UDim2.fromOffset(6, CONFIG.TOUCH + 6), BackgroundColor3 = TH.panel,
-    ScrollBarThickness = 5, ScrollBarImageColor3 = TH.violet, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(0, 0, 0, 0),
-    ZIndex = 31}, detail)
-corner(dScroll, 8); pad(dScroll, 8)
-mk("UIListLayout", {Padding = UDim.new(0, 0), SortOrder = Enum.SortOrder.LayoutOrder}, dScroll)
+
+---------------- Caja de búsqueda con lupa dibujada
+function UI.search(parent, x, y, w, h, placeholder, onChange)
+    local f = box(parent, x, y, w, h, TH.card, 6, TH.border, 12)
+    local ring = box(f, 11, h / 2 - 5, 8, 8, nil, 4, TH.dim, 14)
+    ring.BackgroundTransparency = 1
+    placeSegment(segment(f, TH.dim, 14), 18, h / 2 + 2, 21.5, h / 2 + 5.5, 1.2)
+    local tb = mk("TextBox", {Position = UDim2.fromOffset(32, 0), Size = UDim2.fromOffset(w - 40, h), BackgroundTransparency = 1, Text = "",
+        PlaceholderText = placeholder, PlaceholderColor3 = TH.text, TextColor3 = TH.text, TextSize = 11.5, ClearTextOnFocus = false,
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 14}, f)
+    setFont(tb, FONT.sans)
+    U.conn(tb:GetPropertyChangedSignal("Text"), function() onChange(tb.Text) end, "buscar")
+    return tb
+end
+
+---------------- Copiar o mostrar
+function UI.copyOrShow(title, text)
+    if U.copy(text) then
+        UI.toast(string.format(STR.COPIED, #text))
+    else
+        UI.toast(STR.NO_CLIPBOARD)
+        UI.detail(title, text)
+    end
+end
+
+-------------------------------------------------------------------------------
+-- 10. PESTAÑAS — lateral, tarjetas, páginas, detalle y barra de estado
+-------------------------------------------------------------------------------
+local PAGE_Y = L.SEARCH_Y
+local PAGE_H = L.CHART_Y + L.CHART_H - L.SEARCH_Y
+local CHIPS_Y = L.CHIPS_Y - PAGE_Y
+local TABLE_Y = L.TABLE_Y - PAGE_Y
+local fmtInt = function(n)
+    local s = tostring(math.floor(n or 0))
+    local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    return (out:gsub("^,", ""))
+end
+local function fmt(v, f, unit) if v == nil then return STR.NA end return string.format(f, v) .. (unit or "") end
+
+---------------- Lateral: pestañas
+local SIDE = {tabs = {}, seg = {}, modes = {}, info = {}}
+label(sidebar, {x = 17.5, y = 13, w = 150, h = 14, text = STR.UI.SIDE_TABS, size = 10, color = TH.dim})
+for i, name in ipairs(STR.TABS) do
+    local cy = L.TAB_Y0 - L.TITLE_H + 13 + (i - 1) * L.TAB_STEP
+    local b = mk("TextButton", {Position = UDim2.fromOffset(L.SIDE_X, cy - L.TAB_H / 2), Size = UDim2.fromOffset(L.SIDE_W, L.TAB_H),
+        BackgroundColor3 = TH.sel, BackgroundTransparency = 1, Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 13}, sidebar)
+    corner(b, 6)
+    local bar = box(b, 0, 0, 3, L.TAB_H, TH.cyan, 2, nil, 14)
+    local name_ = label(b, {x = 7.6, y = 0, w = 100, h = L.TAB_H, text = name, size = 11.5, color = TH.dim})
+    local count = label(b, {x = 90, y = 0, w = 63.7, h = L.TAB_H, text = "", size = 10, color = TH.dim, align = "R", font = FONT.mono})
+    SIDE.tabs[name] = {b = b, bar = bar, name = name_, count = count}
+    UI.pages[name] = box(main, 0, PAGE_Y, L.MAIN_W, PAGE_H, nil, nil, nil, 12)
+    UI.pages[name].Visible = false
+end
+
+---------------- Lateral: jugadores
+label(sidebar, {x = 17.5, y = L.PLAYERS_LABEL_Y - L.TITLE_H, w = 150, h = 14, text = STR.UI.SIDE_PLAYERS, size = 10, color = TH.dim})
+local segFrame = box(sidebar, L.SIDE_X, L.SEG_Y - L.TITLE_H, L.SIDE_W, L.SEG_H, TH.chip, 6, TH.border, 13)
+segFrame.ClipsDescendants = true
+for i, text in ipairs(STR.UI.SEG) do
+    local w = L.SIDE_W / 3
+    local b = mk("TextButton", {Position = UDim2.fromOffset((i - 1) * w, 0), Size = UDim2.fromOffset(w, L.SEG_H), BackgroundColor3 = TH.segOn,
+        BackgroundTransparency = 1, Text = text, TextColor3 = TH.dim, TextSize = 10.5, AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 14}, segFrame)
+    setFont(b, FONT.med)
+    SIDE.seg[i] = b
+end
+label(sidebar, {x = 17.5, y = L.SEG_Y - L.TITLE_H + L.SEG_H + 6, w = 158, h = 30, text = STR.UI.PLAYERS_NOTE, size = 10, color = TH.dim, wrap = true, top = true})
+
+---------------- Lateral: modos
+label(sidebar, {x = 17.5, y = L.MODE_LABEL_Y - L.TITLE_H, w = 150, h = 14, text = STR.UI.SIDE_MODE, size = 10, color = TH.dim})
+for i, m in ipairs(CONFIG.MODES) do
+    local y = L.MODE_Y0 - L.TITLE_H + (i - 1) * L.MODE_STEP
+    local b = mk("TextButton", {Position = UDim2.fromOffset(L.SIDE_X, y), Size = UDim2.fromOffset(L.SIDE_W, L.MODE_H), BackgroundColor3 = TH.sel,
+        BackgroundTransparency = 1, Text = "", AutoButtonColor = false, BorderSizePixel = 0, ZIndex = 13}, sidebar)
+    corner(b, 7)
+    local st = stroke(b, TH.cyan)
+    local dot = box(b, 8.4, 10.7, 5, 5, TH.dotOff, 3, nil, 14)
+    label(b, {x = 21.7, y = 5, w = 136, h = 16, text = m.label, size = 12, font = FONT.semi})
+    label(b, {x = 21.7, y = 19.5, w = 138, h = 14, text = m.desc or "", size = 10, color = TH.dim})
+    SIDE.modes[i] = {b = b, st = st, dot = dot}
+    U.conn(b.Activated, function()
+        MODE.set(i)
+        if MODE.def.capture then UI.toast(string.format(STR.CAPTURE_START, CONFIG.CAPTURE_SECONDS)) end
+        UI.force = true
+    end, "modo " .. m.id)
+end
+
+---------------- Lateral: información del ejecutor
+do
+    local card = box(sidebar, L.SIDE_X, L.INFO_Y - L.TITLE_H, L.SIDE_W, L.INFO_H, TH.side, 7, TH.border, 13)
+    for i, k in ipairs(STR.UI.INFO) do
+        local cy = 16 + (i - 1) * L.INFO_STEP
+        label(card, {x = 9.3, y = cy - 7, w = 100, h = 14, text = k, size = 10, color = TH.dim})
+        SIDE.info[i] = label(card, {x = 70, y = cy - 7, w = 81, h = 14, text = "", size = 10, align = "R"})
+    end
+end
+
+---------------- Tarjetas de métricas
+local METRIC = {}
+local function metricCard(x, y, w, h, title, color, sparkX, sparkY)
+    local c = box(main, x, y, w, h, TH.card, 8, TH.border, 12)
+    label(c, {x = 11.8, y = 9.7, w = w - 20, h = 14, text = title, size = 11, color = TH.dim})
+    local value = label(c, {x = 11.8, y = 26, w = 80, h = 24, text = "", size = 19, font = FONT.bold, color = color})
+    local value2 = label(c, {x = 11.8, y = 44.7, w = 80, h = 24, text = "", size = 19, font = FONT.bold, color = color})
+    local sub = label(c, {x = 11.8, y = 50, w = w - 20, h = 14, text = "", size = 10, color = TH.dim})
+    local spark = UI.spark(c, sparkX, sparkY, 53, 17, color)
+    return {card = c, value = value, value2 = value2, sub = sub, spark = spark, baseSubY = 50}
+end
+-- Valor en una o dos líneas (como en el diseño: "412 / MB" cuando no cabe).
+local function setMetric(m, value, sub, hist)
+    local num, unit = value:match("^(%S+)%s+(%S+)$")
+    local twoLines = num and #value >= 6
+    m.value.Text = twoLines and num or value
+    m.value2.Text = twoLines and unit or ""
+    m.sub.Position = UDim2.fromOffset(11.8, twoLines and 67 or m.baseSubY)
+    m.sub.Text = sub
+    if hist and #hist >= 2 then m.spark.set(hist) end
+end
+for k, def in ipairs({{"fps", STR.UI.M_FPS, TH.ok}, {"ping", STR.UI.M_PING, TH.cyan}, {"mem", STR.UI.M_MEM, TH.violet}, {"net", STR.UI.M_NET, TH.blue}}) do
+    METRIC[def[1]] = metricCard(0.7 + (k - 1) * (L.METRIC_W + L.METRIC_GAP), L.TOP, L.METRIC_W, L.METRIC_H, def[2], def[3], 74.4, 28)
+end
+METRIC.eps = metricCard(0, L.WIDE_Y, L.WIDE_W, L.WIDE_H, STR.UI.M_EPS, TH.warn, 224, 27.2)
+METRIC.console = metricCard(L.WIDE_W + 10.3, L.WIDE_Y, L.WIDE_W, L.WIDE_H, STR.UI.M_CONSOLE, TH.bad, 224, 27.2)
+
+---------------- Columna derecha: detalle, feed y nota
+local DC = {} -- tarjeta de detalle
+do
+    local c = box(right, 0.5, L.TOP + 0.5, L.RIGHT_W - 0.5, L.DETAIL_H, TH.card, 8, TH.border, 12)
+    DC.card = c
+    DC.head = label(c, {x = 12, y = 13, w = 140, h = 15, text = STR.UI.DETAIL, size = 11.5, font = FONT.semi})
+    DC.badge, DC.badgeText = badge(c, 170, 12.7, 14.3, "Servidor", 9.5)
+    DC.title = label(c, {x = 12, y = 35, w = 202, h = 18, text = STR.UI.NO_SELECTION, size = 13, font = FONT.semi})
+    DC.keys, DC.vals = {}, {}
+    for i = 1, 4 do
+        local cy = 66.7 + (i - 1) * 18.1
+        DC.keys[i] = label(c, {x = 12, y = cy - 7, w = 90, h = 14, text = "", size = 10.5, color = TH.dim})
+        DC.vals[i] = label(c, {x = 70, y = cy - 7, w = 144, h = 14, text = "", size = 10.5, align = "R"})
+    end
+    label(c, {x = 12, y = 134.5, w = 100, h = 14, text = STR.UI.D_ROUTE, size = 10, color = TH.dim})
+    DC.route = label(c, {x = 12, y = 156, w = 202, h = 14, text = "", size = 10, color = TH.cyan, font = FONT.mono})
+    label(c, {x = 12, y = 178.5, w = 100, h = 14, text = STR.UI.D_ARGS, size = 10, color = TH.dim})
+    local code = box(c, 12, 200.5, 202, 44.4, TH.code, 6, TH.border, 13)
+    code.ClipsDescendants = true
+    DC.args = label(code, {x = 9.6, y = 7, w = 186, h = 31, text = "", size = 10, font = FONT.mono, wrap = true, top = true, z = 14})
+    label(c, {x = 12, y = 255.5, w = 40, h = 14, text = STR.UI.D_TYPES, size = 10, color = TH.dim})
+    DC.typeChips = {}
+    for i = 1, 3 do
+        local f = box(c, 39 + (i - 1) * 46, 254.5, 42.5, 16, TH.code, 4, TH.border, 13)
+        DC.typeChips[i] = {f = f, t = label(f, {x = 0, y = 0, w = 42.5, h = 16, text = "", size = 9.5, font = FONT.mono, align = "C", z = 14})}
+    end
+    DC.copy = button(c, 12.2, 280.3, 62, 28, STR.UI.D_COPY, TH.ok, TH.card, nil, 10.5)
+    DC.watch = button(c, 81, 280.3, 61.3, 28, STR.UI.D_WATCH, TH.violet, TH.card, nil, 10.5)
+    DC.inspect = button(c, 149.2, 280.3, 64.3, 28, STR.UI.D_INSPECT, TH.text, TH.card, nil, 10.5)
+end
+local FC = {}
+do
+    local c = box(right, 0.5, L.FEED_Y, L.RIGHT_W - 0.5, L.FEED_H, TH.card, 8, TH.border, 12)
+    label(c, {x = 12, y = 11, w = 200, h = 15, text = STR.UI.FEED_CARD, size = 11.5, font = FONT.semi})
+    FC.k1 = label(c, {x = 12, y = 32.5, w = 120, h = 14, text = STR.UI.FEED_BUDGET, size = 10, color = TH.dim})
+    FC.v1 = label(c, {x = 110, y = 32.5, w = 104, h = 14, text = "", size = 10, font = FONT.mono, align = "R"})
+    FC.bar1 = progress(c, 12, 51.5, 202, 4, TH.ok)
+    FC.k2 = label(c, {x = 12, y = 62.5, w = 130, h = 14, text = "", size = 10, color = TH.dim})
+    FC.v2 = label(c, {x = 110, y = 62.5, w = 104, h = 14, text = "", size = 10, font = FONT.mono, align = "R", color = TH.warn})
+    FC.bar2 = progress(c, 12, 80.5, 202, 4, TH.warn)
+    label(c, {x = 12, y = 91.5, w = 130, h = 14, text = STR.UI.FEED_DROPPED, size = 10, color = TH.dim})
+    FC.v3 = label(c, {x = 110, y = 91.5, w = 104, h = 14, text = "", size = 10, align = "R", font = FONT.mono})
+    label(c, {x = 12, y = 108.5, w = 130, h = 14, text = STR.UI.FEED_MODE, size = 10, color = TH.dim})
+    FC.v4 = label(c, {x = 110, y = 108.5, w = 104, h = 14, text = "", size = 10, align = "R", color = TH.ok})
+end
+do
+    local c = box(right, 0.5, L.NOTE_Y, L.RIGHT_W - 0.5, L.NOTE_H, nil, 8, nil, 12)
+    dashedBorder(c, L.RIGHT_W - 0.5, L.NOTE_H, TH.border)
+    label(c, {x = 12, y = 10, w = 202, h = 46, text = STR.UI.NOTE, size = 9.5, color = TH.dim, wrap = true, top = true})
+end
+
+---------------- Barra de estado
+local ST = {}
+do
+    local leftList = box(statusBar, 17.3, 0, 760, L.STATUS_H, nil, nil, nil, 12)
+    mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 14), VerticalAlignment = Enum.VerticalAlignment.Center,
+        SortOrder = Enum.SortOrder.LayoutOrder}, leftList)
+    local live = box(leftList, 0, 0, 62, L.STATUS_H, nil, nil, nil, 12)
+    live.LayoutOrder = 1
+    ST.dot = box(live, 0, 10.5, 6, 6, TH.ok, 3, nil, 13)
+    ST.live = label(live, {x = 9.4, y = 0, w = 55, h = L.STATUS_H, text = STR.UI.ST_LIVE, size = 10, font = FONT.semi, color = TH.ok})
+    local function item(parent, order, align)
+        local t = label(parent, {x = 0, y = 0, w = 0, h = L.STATUS_H, text = "", size = 10, color = TH.dim, align = align})
+        t.AutomaticSize = Enum.AutomaticSize.X
+        t.LayoutOrder = order
+        return t
+    end
+    ST.left = {}
+    for i = 1, 5 do ST.left[i] = item(leftList, i + 1) end
+    local rightList = box(statusBar, 625, 0, 400, L.STATUS_H, nil, nil, nil, 12)
+    mk("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 14), VerticalAlignment = Enum.VerticalAlignment.Center,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right, SortOrder = Enum.SortOrder.LayoutOrder}, rightList)
+    ST.right = {}
+    for i = 1, 4 do ST.right[i] = item(rightList, i) end
+end
+
+---------------- Detalle largo (inspector, script de Studio, limitaciones…) sobre la zona de la pestaña
+local detail = box(main, 0, PAGE_Y, L.MAIN_W, PAGE_H, TH.bg, 8, TH.violet, 30)
+detail.Active = true
+detail.Visible = false
 local DET = {chunks = {}, text = "", extraFn = nil}
+DET.title = label(detail, {x = 12, y = 6, w = 300, h = 28, text = "", size = 12, font = FONT.semi, color = TH.cyan, z = 31})
+DET.close = button(detail, L.MAIN_W - 72, 6, 62, 26, STR.UI.BACK, TH.bad, TH.card, function() detail.Visible = false end, 10.5)
+DET.copy = button(detail, L.MAIN_W - 140, 6, 62, 26, STR.COPY, TH.cyan, TH.card, function() UI.copyOrShow(STR.DETAIL, DET.text) end, 10.5)
+DET.extra = button(detail, L.MAIN_W - 238, 6, 92, 26, "", TH.violet, TH.card, function() if DET.extraFn then DET.extraFn() end end, 10.5)
+for _, b in ipairs({DET.close, DET.copy, DET.extra}) do b.ZIndex = 31 end
+DET.scroll = mk("ScrollingFrame", {Position = UDim2.fromOffset(8, 40), Size = UDim2.fromOffset(L.MAIN_W - 16, PAGE_H - 48), BackgroundColor3 = TH.card,
+    BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = TH.violet, AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    CanvasSize = UDim2.new(0, 0, 0, 0), ZIndex = 31}, detail)
+corner(DET.scroll, 6)
+mk("UIPadding", {PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8)}, DET.scroll)
+mk("UIListLayout", {Padding = UDim.new(0, 0), SortOrder = Enum.SortOrder.LayoutOrder}, DET.scroll)
 
 local function chunkText(s)
     local parts, pos = {}, 1
@@ -1746,177 +2128,61 @@ end
 function UI.detail(title, text, extraLabel, extraFn)
     DET.text = tostring(text or "")
     DET.extraFn = extraFn
-    detailTitle.Text = U.esc(title or STR.DETAIL)
-    dExtra.Visible = extraLabel ~= nil
-    dExtra.Text = extraLabel or ""
+    DET.title.Text = title or STR.DETAIL
+    DET.extra.Visible = extraLabel ~= nil
+    DET.extra.Text = extraLabel or ""
     local shown = DET.text
     if #shown > CONFIG.DETAIL_MAX then shown = shown:sub(1, CONFIG.DETAIL_MAX) .. STR.DETAIL_CUT end
     local parts = chunkText(shown)
     for idx, part in ipairs(parts) do
-        local box = DET.chunks[idx]
-        if not box then
-            box = mk("TextBox", {Size = UDim2.new(1, -6, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1,
-                TextColor3 = TH.text, Font = Enum.Font.Code, TextSize = 12, TextWrapped = true, MultiLine = true, ClearTextOnFocus = false,
-                TextEditable = false, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
-                LayoutOrder = idx, ZIndex = 32}, dScroll)
-            DET.chunks[idx] = box
+        local tb = DET.chunks[idx]
+        if not tb then
+            tb = mk("TextBox", {Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, TextColor3 = TH.text,
+                TextSize = 10.5, TextWrapped = true, MultiLine = true, ClearTextOnFocus = false, TextEditable = false,
+                TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = idx, ZIndex = 32}, DET.scroll)
+            setFont(tb, FONT.mono)
+            DET.chunks[idx] = tb
         end
-        box.Text = part
-        box.Visible = true
+        tb.Text = part
+        tb.Visible = true
     end
     for i = #parts + 1, #DET.chunks do DET.chunks[i].Visible = false; DET.chunks[i].Text = "" end
-    dScroll.CanvasPosition = Vector2.new(0, 0)
+    DET.scroll.CanvasPosition = Vector2.new(0, 0)
     detail.Visible = true
 end
-U.conn(dClose.Activated, function() detail.Visible = false end, "cerrar detalle")
-U.conn(dCopy.Activated, function() UI.copyOrShow(STR.DETAIL, DET.text) end, "copiar detalle")
-U.conn(dExtra.Activated, function() if DET.extraFn then DET.extraFn() end end, "acción detalle")
 
-function UI.copyOrShow(title, text)
-    if U.copy(text) then
-        UI.toast(string.format(STR.COPIED, #text))
-    else
-        UI.toast(STR.NO_CLIPBOARD)
-        UI.detail(title, text)
-    end
-end
-
----------------- Selector (lista de opciones a pantalla completa del cuerpo)
-local picker = mk("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = TH.bg, Visible = false, ZIndex = 34, Active = true}, body)
-corner(picker, 10); stroke(picker, TH.cyan, 1.2)
-local pickerTitle = mk("TextLabel", {Size = UDim2.new(1, -100, 0, CONFIG.TOUCH), Position = UDim2.fromOffset(10, 3), BackgroundTransparency = 1,
-    TextColor3 = TH.cyan, Font = Enum.Font.GothamBold, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 35}, picker)
-local pickerClose = mk("TextButton", {Size = UDim2.fromOffset(70, CONFIG.TOUCH), Position = UDim2.new(1, -76, 0, 3), BackgroundColor3 = TH.card2,
-    Text = STR.CLOSE_BTN, TextColor3 = TH.bad, Font = Enum.Font.GothamBold, TextSize = 12, ZIndex = 35}, picker)
-corner(pickerClose, 8)
-local pickerList = UI.list(picker, CONFIG.TOUCH + 8)
-pickerList.sf.ZIndex = 35
-U.conn(pickerClose.Activated, function() picker.Visible = false end, "cerrar selector")
--- options = {{title=, sub=, onPick=fn}, ...}
+---------------- Selector de jugador (misma zona)
+local picker = box(main, 0, PAGE_Y, L.MAIN_W, PAGE_H, TH.bg, 8, TH.cyan, 33)
+picker.Active = true
+picker.Visible = false
+local pickerTitle = label(picker, {x = 12, y = 6, w = 300, h = 28, text = STR.PICK_TITLE, size = 12, font = FONT.semi, color = TH.cyan, z = 34})
+local pickerClose = button(picker, L.MAIN_W - 72, 6, 62, 26, STR.UI.BACK, TH.bad, TH.card, function() picker.Visible = false end, 10.5)
+pickerClose.ZIndex = 34
+local pickerList = UI.table(picker, 8, 40, L.MAIN_W - 16, PAGE_H - 48, {
+    {title = STR.UI.D_PLAYER, x = 14, w = 300, kind = "strong"}, {title = "UserId", x = 330, w = 230, kind = "mono"}})
 function UI.pick(title, options)
     pickerTitle.Text = title
     local items = {}
     for i, o in ipairs(options) do
-        items[i] = {title = o.title, sub = o.sub, color = TH.cyan, onTap = function()
-            picker.Visible = false
-            o.onPick()
-            UI.force = true
-        end}
+        items[i] = {cells = {o.title, o.sub or ""}, onTap = function() picker.Visible = false; o.onPick(); UI.force = true end}
     end
     picker.Visible = true
     pickerList.set(items)
 end
 
----------------- Abrir / cerrar / pestañas
-function UI.setTab(name)
-    UI.tab = name
-    CFG.set("tab", name)
-    detail.Visible = false
-    picker.Visible = false
-    for n, p in pairs(UI.pages) do p.Visible = (n == name) end
-    for n, b in pairs(tabButtons) do
-        local on = (n == name)
-        b.BackgroundColor3 = on and TH.card2 or TH.card
-        b.TextColor3 = on and TH.cyan or TH.dim
-        local st = b:FindFirstChildOfClass("UIStroke") or stroke(b, TH.cyan, 1.4)
-        st.Transparency = on and 0 or 1
-    end
-    UI.force = true
-end
-for name, b in pairs(tabButtons) do
-    U.conn(b.Activated, function() UI.setTab(name) end, "pestaña " .. name)
-end
-
-function UI.toggle(state)
-    if state == nil then state = not UI.open end
-    UI.open = state
-    panel.Visible = state
-    if state then UI.force = true end
-end
-
-local function saveGeometry()
-    pcall(function()
-        CFG.set("fabX", fab.Position.X.Offset); CFG.set("fabY", fab.Position.Y.Offset)
-        CFG.set("x", panel.Position.X.Offset); CFG.set("y", panel.Position.Y.Offset)
-        CFG.set("w", GEOM.w); CFG.set("h", GEOM.h)
-    end)
-end
-draggable(fab, fab, function() UI.toggle() end, saveGeometry)
-draggable(header, panel, nil, saveGeometry)
-U.conn(closeBtn.Activated, function() UI.toggle(false) end, "cerrar panel")
-
----------------- Tamaño: minimizado, giro de pantalla y esquina de redimensionar
-local grip = mk("TextButton", {Size = UDim2.fromOffset(CONFIG.TOUCH, CONFIG.TOUCH), Position = UDim2.new(1, -CONFIG.TOUCH, 1, -CONFIG.TOUCH),
-    BackgroundTransparency = 1, Text = STR.GRIP, TextColor3 = TH.cyan, TextTransparency = 0.3, Font = Enum.Font.GothamBold, TextSize = 18,
-    ZIndex = 25, TextXAlignment = Enum.TextXAlignment.Right, TextYAlignment = Enum.TextYAlignment.Bottom}, panel)
-
--- Ajusta GEOM a la pantalla actual y aplica el tamaño respetando "minimizado".
-function UI.applySize()
-    local ss, sc = screenSize(), UI.scale()
-    GEOM.w = math.floor(math.clamp(GEOM.w, CONFIG.PANEL_MIN_W, math.max(CONFIG.PANEL_MIN_W, ss.X / sc - CONFIG.SCREEN_PAD)))
-    GEOM.h = math.floor(math.clamp(GEOM.h, CONFIG.PANEL_MIN_H, math.max(CONFIG.PANEL_MIN_H, ss.Y / sc - CONFIG.SCREEN_PAD)))
-    local h = UI.collapsed and CONFIG.HEADER_H or GEOM.h
-    panel.Size = UDim2.fromOffset(GEOM.w, h)
-    tabBar.Visible, body.Visible, footer.Visible, grip.Visible = not UI.collapsed, not UI.collapsed, not UI.collapsed, not UI.collapsed
-    clampFrame(panel)
-    clampFrame(fab)
-end
-
-U.conn(minBtn.Activated, function()
-    UI.collapsed = not UI.collapsed
-    UI.applySize()
-end, "minimizar")
-
-do
-    local resizing, startPos, startW, startH = false, nil, 0, 0
-    U.conn(grip.InputBegan, function(input)
-        if not isPress(input) then return end
-        resizing, startPos, startW, startH = true, input.Position, GEOM.w, GEOM.h
-        onRelease(input, function()
-            resizing = false
-            saveGeometry()
-        end)
-    end, "redimensionar inicio")
-    U.conn(S.UIS.InputChanged, function(input)
-        if not resizing or not isMove(input) then return end
-        local d = input.Position - startPos
-        local ss, sc = screenSize(), UI.scale()
-        local maxW = (ss.X - panel.Position.X.Offset) / sc
-        local maxH = (ss.Y - panel.Position.Y.Offset) / sc
-        GEOM.w = math.floor(math.clamp(startW + d.X / sc, CONFIG.PANEL_MIN_W, math.max(CONFIG.PANEL_MIN_W, maxW)))
-        GEOM.h = math.floor(math.clamp(startH + d.Y / sc, CONFIG.PANEL_MIN_H, math.max(CONFIG.PANEL_MIN_H, maxH)))
-        panel.Size = UDim2.fromOffset(GEOM.w, GEOM.h)
-    end, "redimensionar")
-end
-
-function UI.scaleLabel(sc) return string.format(STR.BTN_SCALE, math.floor((sc or UI.scale()) * 100 + 0.5)) end
-
-function UI.cycleScale()
-    local cur, nextS = UI.scale(), CONFIG.SCALES[1]
-    for i, v in ipairs(CONFIG.SCALES) do
-        if math.abs(v - cur) < 0.01 then nextS = CONFIG.SCALES[i % #CONFIG.SCALES + 1] end
-    end
-    uiScale.Scale = nextS
-    CFG.set("scale", nextS)
-    UI.applySize()
-    for _, L in pairs(UI.lists) do pcall(L.draw) end
-    return nextS
-end
-
-U.conn(screen:GetPropertyChangedSignal("AbsoluteSize"), UI.applySize, "giro de pantalla")
-task.defer(UI.applySize)
-
--------------------------------------------------------------------------------
--- 10. PESTAÑAS
--------------------------------------------------------------------------------
-local LIST_TOP = CONFIG.TOOLBAR_H + CONFIG.GAP
-
----------------- Controles compartidos (MAIN y LOGS): Modo y Jugadores
+---------------- Controles compartidos
 function UI.controlLabels()
     local modeTxt = MODE.def.label
     local left = MODE.captureLeft()
     if left then modeTxt = modeTxt .. " " .. left .. "s" end
     return {mode = string.format(STR.BTN_MODE, modeTxt), players = string.format(STR.BTN_PLAYERS, FEED.label())}
+end
+function UI.addControl(kind, b) UI.controls[#UI.controls + 1] = {kind = kind, b = b} end
+function UI.refreshControls(labels)
+    for _, c in ipairs(UI.controls) do
+        local t = labels[c.kind]
+        if t and c.b.Text ~= t then c.b.Text = t end
+    end
 end
 
 function UI.pickPlayer()
@@ -1927,25 +2193,16 @@ function UI.pickPlayer()
     local ok, players = pcall(function() return S.Players:GetPlayers() end)
     for _, p in ipairs(ok and players or {}) do
         local uid = p.UserId
-        opts[#opts + 1] = {title = U.esc(p.DisplayName ~= p.Name and (p.DisplayName .. " (@" .. p.Name .. ")") or p.Name),
+        opts[#opts + 1] = {title = (p.DisplayName and p.DisplayName ~= p.Name) and (p.DisplayName .. " (@" .. p.Name .. ")") or p.Name,
             sub = string.format(STR.PICK_SUB, uid, p == LP and STR.PICK_YOU or ""), onPick = function() FEED.setFilter(uid) end}
     end
     UI.pick(STR.PICK_TITLE, opts)
 end
-
-local function addSharedControls(tb)
-    local labels = UI.controlLabels()
-    UI.addControl("mode", tb.button(labels.mode, function()
-        MODE.cycle()
-        if MODE.def.capture then UI.toast(string.format(STR.CAPTURE_START, CONFIG.CAPTURE_SECONDS)) end
-        UI.refreshControls(UI.controlLabels())
+for i, b in ipairs(SIDE.seg) do
+    U.conn(b.Activated, function()
+        if i == 1 then FEED.setFilter("all") elseif i == 2 then FEED.setFilter("me") else UI.pickPlayer() end
         UI.force = true
-    end, TH.warn, 150))
-    UI.addControl("players", tb.button(labels.players, function()
-        if FEED.cycle() == "pick" then UI.pickPlayer() end
-        UI.refreshControls(UI.controlLabels())
-        UI.force = true
-    end, TH.ok, 150))
+    end, "segmento jugadores")
 end
 
 ---------------- Inspector de objetos
@@ -1999,8 +2256,7 @@ end
 
 local function openInspector(inst)
     local function show()
-        local watching = WATCH.has(inst)
-        UI.detail(string.format(STR.INSPECTOR, tostring(inst.Name)), inspect(inst), watching and STR.UNWATCH_BTN or STR.WATCH_BTN, function()
+        UI.detail(string.format(STR.INSPECTOR, tostring(inst.Name)), inspect(inst), WATCH.has(inst) and STR.UNWATCH_BTN or STR.WATCH_BTN, function()
             local on = WATCH.toggle(inst)
             UI.toast(on and string.format(STR.WATCH_ON, CONFIG.MAX_WATCH) or STR.WATCH_OFF)
             show()
@@ -2009,26 +2265,85 @@ local function openInspector(inst)
     show()
 end
 
----------------- Filtro de registros (categoría + búsqueda + modo + jugadores)
-local logState = {q = "", cat = CFG.get("logCat", 1), box = nil, catBtn = nil}
-if not CATS[logState.cat] then logState.cat = 1 end
-
-local function logVisible(e, q, cat)
-    if cat ~= "Todas" and e.cat ~= cat then return false end
-    if not MODE.passes(e) or not FEED.passes(e) then return false end
-    return U.match(q, e.name, e.args, e.extra, e.cat, e.types, e.player, e.remote, e.kind)
+local function remoteByPath(path)
+    if not path then return nil end
+    for _, e in ipairs(REG.remotes) do if e.path == path then return e end end
+    return nil
 end
 
+---------------- Tarjeta de detalle (columna derecha)
+-- spec = {badge, title, rows = {{k, v, color}}, route, args, types = {...}, copyText, inst}
+function UI.showCard(spec)
+    DC.spec = spec
+    DC.badge.Visible = spec.badge ~= nil
+    if spec.badge then setBadge(DC.badge, DC.badgeText, spec.badge) end
+    DC.title.Text = spec.title or ""
+    for i = 1, 4 do
+        local r = spec.rows and spec.rows[i]
+        DC.keys[i].Text = r and r[1] or ""
+        DC.vals[i].Text = r and tostring(r[2]) or ""
+        DC.vals[i].TextColor3 = (r and r[3]) or TH.text
+        setFont(DC.vals[i], (r and r[4]) and FONT.mono or FONT.sans)
+    end
+    DC.route.Text = spec.route or "—"
+    DC.args.Text = spec.args or ""
+    for i, chip in ipairs(DC.typeChips) do
+        local t = spec.types and spec.types[i]
+        chip.f.Visible = t ~= nil
+        chip.t.Text = t or ""
+    end
+    DC.watch.Text = (spec.inst and WATCH.has(spec.inst)) and STR.UI.D_UNWATCH or STR.UI.D_WATCH
+end
+U.conn(DC.copy.Activated, function() if DC.spec then UI.copyOrShow(STR.DETAIL, DC.spec.copyText or DC.args.Text) end end, "detalle copiar")
+U.conn(DC.watch.Activated, function()
+    local inst = DC.spec and DC.spec.inst
+    if not inst then UI.toast(STR.UI.D_NO_INST) return end
+    UI.toast(WATCH.toggle(inst) and string.format(STR.WATCH_ON, CONFIG.MAX_WATCH) or STR.WATCH_OFF)
+    UI.showCard(DC.spec)
+end, "detalle vigilar")
+U.conn(DC.inspect.Activated, function()
+    local spec = DC.spec
+    if spec and spec.inspect then spec.inspect() return end
+    if spec and spec.inst then openInspector(spec.inst) else UI.toast(STR.UI.D_NO_INST) end
+end, "detalle inspeccionar")
+
+local function eventCard(e)
+    local types = {}
+    for t in tostring(e.types or ""):gmatch("[^,%s]+") do types[#types + 1] = t end
+    local rem = remoteByPath(e.remote)
+    local who = e.player and ("@" .. tostring(e.player) .. (e.userId and (" · " .. tostring(e.userId)) or "")) or "—"
+    UI.showCard({
+        badge = (e.kind == "Spam") and "Spam" or e.cat,
+        title = (e.cat == "Servidor" and e.kind and e.kind ~= "Spam" and e.kind ~= e.name) and (e.kind .. " · " .. e.name) or e.name,
+        rows = {{STR.UI.D_TIME, e.t, TH.text, true}, {STR.UI.D_PLAYER, who, e.player and TH.violet or TH.dim},
+            {STR.UI.D_DIR, e.dir ~= "" and e.dir or "—"}, {STR.UI.D_COUNT, (rem and ("×" .. rem.count)) or (FEED.byRemote[e.name] and ("×" .. FEED.byRemote[e.name])) or "—", TH.text, true}},
+        route = e.remote or (e.extra ~= "" and e.extra) or "—", args = e.args ~= "" and e.args or e.extra, types = types,
+        copyText = LOG.format(e), inst = rem and rem.inst or nil,
+    })
+end
+
+---------------- Filtros de registros: chips + búsqueda + modo + jugadores
+local CHIPS = STR.UI.CHIPS_LOGS
+local logState = {q = "", chip = CFG.get("logChip", 1), box = nil}
+if not CHIPS[logState.chip] then logState.chip = 1 end
+local function chipPasses(e)
+    local c = CHIPS[logState.chip]
+    if c == "Todas" then return true end
+    if c == "Spam" then return e.kind == "Spam" end
+    return e.cat == c
+end
+local function logVisible(e, q)
+    if not chipPasses(e) or not MODE.passes(e) or not FEED.passes(e) then return false end
+    return U.match(q, e.name, e.args, e.extra, e.cat, e.types, e.player, e.remote, e.kind)
+end
 local function filteredLogs(limit)
-    local q, cat = U.lower(logState.q), CATS[logState.cat]
-    local out = {}
+    local q, out = U.lower(logState.q), {}
     LOG.iter(function(e)
-        if logVisible(e, q, cat) then out[#out + 1] = e end
+        if logVisible(e, q) then out[#out + 1] = e end
         return not limit or #out < limit
     end)
     return out
 end
-
 function UI.logSearch(text)
     logState.q = text
     if logState.box then logState.box.Text = text end
@@ -2036,18 +2351,18 @@ function UI.logSearch(text)
 end
 
 local function logRow(e)
-    local hex = CAT_HEX[e.cat] or HEX.text
-    local who = e.player and ("  " .. rich(HEX.warn, "@" .. tostring(e.player))) or ""
     local preview = e.args ~= "" and e.args or e.extra
     return {
-        title = rich(HEX.dim, e.t) .. "  " .. rich(hex, e.cat) .. "  " .. U.esc(e.name) .. who .. (e.dir ~= "" and ("  " .. rich(HEX.dim, "· " .. e.dir)) or ""),
-        sub = U.esc(U.trunc(U.oneLine(preview), CONFIG.PREVIEW_CHARS)),
-        color = e.alert and TH.bad or hexColor(hex),
-        onTap = function() UI.detail(e.cat .. " · " .. e.name, LOG.format(e)) end,
+        id = e.id, selected = (UI.sel == e.id),
+        cells = {e.t, (e.kind == "Spam") and "Spam" or e.cat, e.player and ("@" .. tostring(e.player)) or "—",
+            (e.cat == "Servidor" and e.kind and e.kind ~= "Spam" and e.kind ~= e.name and e.kind ~= "ServerStats") and (e.kind .. " · " .. e.name) or e.name,
+            U.oneLine(preview), e.types ~= "" and e.types or "—"},
+        colors = {nil, nil, e.player and TH.violet or TH.dim},
+        onTap = function() UI.sel = e.id; eventCard(e) end,
     }
 end
 
----------------- Resumen y textos para copiar
+---------------- Textos para copiar
 function UI.summaryText()
     local t = {
         "GOY Diagnostics v" .. CONFIG.VERSION .. " · " .. U.fullDate(),
@@ -2085,79 +2400,231 @@ local function exportCapture()
     if ok and json then U.export(base .. ".json", json) end
     UI.toast(ok and string.format(STR.SAVED, where) or string.format(STR.EXPORT_FAIL, tostring(where)))
 end
-
 local function showCapture()
     if not MODE.lastCapture then UI.toast(STR.CAPTURE_NONE) return end
     UI.detail(STR.CAPTURE_TITLE, MODE.lastCapture.text, STR.EXPORT, exportCapture)
 end
 
----------------- MAIN
-local function confirmTeleportReload(button)
+local function teleportArmed()
+    return CFG.get("reloadOnTeleport", false) and CFG.get("reloadUrl", "") == CONFIG.RELOAD_URL
+end
+local function confirmTeleportReload(b)
     if CFG.get("reloadOnTeleport", false) then
         CFG.set("reloadOnTeleport", false)
-        button.Text = string.format(STR.BTN_TELEPORT, STR.TELEPORT_OFF)
+        b.Text = string.format(STR.BTN_TELEPORT, STR.TELEPORT_OFF)
         UI.toast(STR.TELEPORT_DONE_OFF)
         return
     end
     UI.detail(STR.TELEPORT_TITLE, string.format(STR.TELEPORT_BODY, CONFIG.RELOAD_URL), STR.CONFIRM, function()
         CFG.set("reloadOnTeleport", true)
-        CFG.set("reloadUrl", CONFIG.RELOAD_URL) -- si la URL de CONFIG cambia, hay que volver a confirmar
-        button.Text = string.format(STR.BTN_TELEPORT, STR.TELEPORT_ON)
+        CFG.set("reloadUrl", CONFIG.RELOAD_URL)
+        b.Text = string.format(STR.BTN_TELEPORT, STR.TELEPORT_ON)
         detail.Visible = false
         UI.toast(STR.TELEPORT_DONE_ON)
     end)
 end
 
-local function teleportArmed()
-    return CFG.get("reloadOnTeleport", false) and CFG.get("reloadUrl", "") == CONFIG.RELOAD_URL
+-- Fila de botones al estilo de la foto, de izquierda a derecha.
+local function toolbarRow(page, x, defs)
+    local out = {}
+    for _, d in ipairs(defs) do
+        out[#out + 1] = button(page, x, 0, d.w, L.SEARCH_H, d.text, d.fg, d.bg, d.fn, 11)
+        x = x + d.w + L.BTN_GAP
+    end
+    return out
 end
 
+---------------- LOGS (la vista de la foto)
+local LOGS = {}
+do
+    local page = UI.pages.LOGS
+    logState.box = UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.UI.SEARCH_LOGS, function(t) logState.q = t; UI.force = true end)
+    local pauseBtn
+    pauseBtn = toolbarRow(page, 333.6, {
+        {text = STR.PAUSE, w = 52.6, fg = TH.text, bg = TH.chip, fn = function(b)
+            LOG.paused = not LOG.paused
+            b.Text = LOG.paused and STR.RESUME or STR.PAUSE
+            UI.force = true
+        end},
+        {text = STR.CLEAR, w = 58, fg = TH.bad, bg = TH.btnRed, fn = function() LOG.clear(); UI.sel = nil; UI.force = true; UI.toast(STR.CLEARED) end},
+        {text = STR.COPY, w = 54, fg = TH.ok, bg = TH.btnGreen, fn = function()
+            local list, t = filteredLogs(), {string.format(STR.LOGS_COPY_HEAD, U.fullDate(), MODE.def.label, FEED.label())}
+            for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]) end
+            UI.copyOrShow(STR.LOGS_TITLE, table.concat(t, "\n"))
+        end},
+        {text = STR.EXPORT, w = 64, fg = TH.violet, bg = TH.btnViolet, fn = function()
+            local list = filteredLogs()
+            local base, t, records = "logs_" .. U.fileStamp(), {string.format(STR.LOGS_COPY_HEAD, U.fullDate(), MODE.def.label, FEED.label())}, {}
+            for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]); records[#records + 1] = LOG.toRecord(list[i]) end
+            local ok, where = U.export(base .. ".txt", table.concat(t, "\n"))
+            local json = U.json({version = CONFIG.VERSION, placeId = game.PlaceId, mode = MODE.def.id, players = FEED.filter, logs = records})
+            if ok and json then U.export(base .. ".json", json) end
+            UI.toast(ok and string.format(STR.SAVED, where) or string.format(STR.EXPORT_FAIL, tostring(where)))
+        end},
+    })
+    LOGS.pause = pauseBtn[1]
+    LOGS.chips = UI.chips(page, 0, CHIPS_Y, CHIPS, function(i) return logState.chip == i end,
+        function(i) logState.chip = i; CFG.set("logChip", i) end, {44, 53, 50, 43, 40, 36, 52, 50, 44})
+    LOGS.count = label(page, {x = 386.5, y = CHIPS_Y, w = 200, h = L.CHIP_H, text = "", size = 10, color = TH.dim, align = "R"})
+    local C = STR.UI.COLS_LOGS
+    LOGS.table = UI.table(page, 0, TABLE_Y, L.MAIN_W, L.TABLE_H, {
+        {title = C[1], x = 14, w = 88, kind = "mono"}, {title = C[2], x = 107, w = 70, kind = "badge"},
+        {title = C[3], x = 184.7, w = 80, kind = "player"}, {title = C[4], x = 269, w = 168, kind = "strong"},
+        {title = C[5], x = 443, w = 46, hw = 60, kind = "mono"}, {title = C[6], x = 494, w = 88, kind = "mono"}})
+    UI.lists.LOGS = LOGS.table
+    -- Remotos / jugadores más activos
+    local cardsY = L.CARDS_Y - PAGE_Y
+    local function topCard(x, title)
+        local c = box(page, x, cardsY, L.CARD_W, L.CARDS_H, TH.card, 8, TH.border, 12)
+        label(c, {x = 12.8, y = 10.7, w = 260, h = 15, text = title, size = 11.5, font = FONT.semi})
+        local rows = {}
+        for i = 1, 5 do
+            local cy = 38.7 + (i - 1) * 27.75
+            rows[i] = {
+                name = label(c, {x = 12.8, y = cy - 7, w = 150, h = 14, text = "", size = 10.5, font = FONT.med}),
+                val = label(c, {x = 120, y = cy - 7, w = 156.8, h = 14, text = "", size = 10, align = "R", color = TH.dim, font = FONT.mono}),
+                bar = progress(c, 12.8, cy + 5.5, 264, 4, BAR_COLORS[i]),
+            }
+        end
+        return c, rows
+    end
+    LOGS.remCard, LOGS.remRows = topCard(0.6, STR.UI.TOP_REMOTES)
+    LOGS.plCard, LOGS.plRows = topCard(299, STR.UI.TOP_PLAYERS)
+    LOGS.plNote = label(LOGS.plCard, {x = 12.8, y = 114.4, w = 264, h = 14, text = string.format(STR.UI.FEED_LIMIT_NOTE, CONFIG.FEED_SENDER_LIMIT, CONFIG.FEED_VIEWER_LIMIT), size = 9.5, color = TH.dim})
+    -- Gráfica de eventos por segundo
+    local ch = box(page, 0.6, L.CHART_Y - PAGE_Y, L.MAIN_W - 1.2, L.CHART_H, TH.card, 8, TH.border, 12)
+    label(ch, {x = 12.2, y = 11, w = 300, h = 15, text = string.format(STR.UI.CHART, L.CHART_SECONDS), size = 11.5, font = FONT.semi})
+    LOGS.peak = label(ch, {x = 400, y = 11, w = 174, h = 15, text = "", size = 9.5, color = TH.dim, align = "R"})
+    LOGS.bars = {}
+    local pitch = (574 - 12.2) / L.CHART_BARS
+    for i = 1, L.CHART_BARS do LOGS.bars[i] = box(ch, 12.2 + (i - 1) * pitch, 92.1, pitch - 2.6, 0, TH.cyan, 2, nil, 13) end
+    local ax = STR.UI.AXIS
+    label(ch, {x = 12.2, y = 99, w = 80, h = 14, text = ax[1], size = 9.5, color = TH.dim})
+    label(ch, {x = 253, y = 99, w = 80, h = 14, text = ax[2], size = 9.5, color = TH.dim, align = "C"})
+    label(ch, {x = 494, y = 99, w = 80, h = 14, text = ax[3], size = 9.5, color = TH.dim, align = "R"})
+end
+
+local function topList(map, n)
+    local list = {}
+    for k, v in pairs(map) do list[#list + 1] = {k = k, v = v} end
+    table.sort(list, function(a, b) local av, bv = type(a.v) == "table" and a.v.count or a.v, type(b.v) == "table" and b.v.count or b.v
+        if av ~= bv then return av > bv end return tostring(a.k) < tostring(b.k) end)
+    local out = {}
+    for i = 1, math.min(n, #list) do out[i] = list[i] end
+    return out
+end
+
+local function renderLogsCharts()
+    -- Remotos más activos: lo que te llega (OnClientEvent) + lo que registra tu servidor.
+    local merged = {}
+    for _, e in ipairs(REG.remotes) do if e.count > 0 and e.name ~= CONFIG.FEED_REMOTE then merged[e.name] = (merged[e.name] or 0) + e.count end end
+    for name, c in pairs(FEED.byRemote) do merged[name] = (merged[name] or 0) + c end
+    local top = topList(merged, 5)
+    local maxv = top[1] and top[1].v or 1
+    for i, r in ipairs(LOGS.remRows) do
+        local it = top[i]
+        r.name.Text = it and tostring(it.k) or (i == 1 and STR.UI.NO_DATA or "")
+        r.val.Text = it and ("×" .. it.v) or ""
+        r.bar(it and it.v / maxv or 0)
+    end
+    local players = topList(FEED.byPlayer, 3)
+    local pmax = players[1] and players[1].v.count or 1
+    for i, r in ipairs(LOGS.plRows) do
+        local it = i <= 3 and players[i] or nil
+        r.name.Text = it and ("@" .. tostring(it.k)) or ((i == 1 and #players == 0) and STR.UI.NO_PLAYERS or "")
+        r.name.TextColor3 = it and TH.violet or TH.dim
+        r.val.Text = it and string.format(STR.UI.TOP_PLAYER_ROW, it.v.count, it.v.peak) or ""
+        r.bar(it and it.v.count / pmax or 0)
+    end
+    for i = 4, 5 do LOGS.plRows[i].name.Text = ""; LOGS.plRows[i].val.Text = ""; LOGS.plRows[i].bar(0) end
+    -- Gráfica: cada barra = media de 2 s
+    local per = L.CHART_SECONDS / L.CHART_BARS
+    local vals, peak, peakI = {}, 0, 0
+    local n = #PERF.eps
+    for b = 1, L.CHART_BARS do
+        local sum, cnt = 0, 0
+        for s = 1, per do
+            local idx = n - (L.CHART_BARS - b) * per - (per - s)
+            if idx >= 1 and PERF.eps[idx] then sum, cnt = sum + PERF.eps[idx], cnt + 1 end
+        end
+        vals[b] = cnt > 0 and sum / cnt or 0
+        if vals[b] > peak then peak, peakI = vals[b], b end
+    end
+    local maxH = 57.6
+    for b, f in ipairs(LOGS.bars) do
+        local h = peak > 0 and math.max(2, vals[b] / peak * maxH) or 2
+        f.Size = UDim2.fromOffset(f.Size.X.Offset, h)
+        f.Position = UDim2.fromOffset(f.Position.X.Offset, 92.1 - h)
+        f.BackgroundColor3 = (b == peakI and peak > 0) and TH.warn or TH.cyan
+    end
+    local maxSec = 0
+    for _, v in ipairs(PERF.eps) do if v > maxSec then maxSec = v end end
+    LOGS.peak.Text = string.format(STR.UI.CHART_PEAK, math.floor(maxSec + 0.5))
+end
+
+local function renderLogs()
+    local list = filteredLogs()
+    LOGS.count.Text = string.format(STR.UI.COUNT, #list, LOG.n)
+    LOGS.chips.refresh()
+    LOGS.pause.Text = LOG.paused and STR.RESUME or STR.PAUSE
+    if UI.sel == nil and list[1] then UI.sel = list[1].id; eventCard(list[1]) end
+    if #list == 0 then
+        local filtered = MODE.def.id ~= "normal" or FEED.filter ~= "all"
+        LOGS.table.set({{cells = {"", "", "", LOG.paused and STR.LOGS_PAUSED or STR.NO_LOGS,
+            filtered and string.format(STR.MODE_EMPTY_SUB, MODE.def.label, FEED.label()) or STR.NO_LOGS_SUB, ""}}})
+    else
+        LOGS.table.setLazy(#list, function(i) return logRow(list[i]) end)
+    end
+    renderLogsCharts()
+end
+
+---------------- MAIN
+local MAINP = {}
 do
     local page = UI.pages.MAIN
-    local tb = UI.toolbar(page)
-    addSharedControls(tb)
-    tb.button(STR.BTN_SUMMARY, function() UI.copyOrShow(STR.SUMMARY_TITLE, UI.summaryText()) end, TH.cyan, 120)
-    tb.button(STR.BTN_LIMITS, function() UI.detail(STR.LIMITS_TITLE, STR.LIMITS) end, nil, 104)
-    tb.button(STR.BTN_STUDIO, function() UI.detail(STR.STUDIO_TITLE, STUDIO_SCRIPT) end, TH.violet, 108)
-    tb.button(UI.scaleLabel(), function(b) b.Text = UI.scaleLabel(UI.cycleScale()) end, nil, 104)
-    if CAP.queue_on_teleport then
-        tb.button(string.format(STR.BTN_TELEPORT, teleportArmed() and STR.TELEPORT_ON or STR.TELEPORT_OFF), confirmTeleportReload, TH.violet, 140)
-    end
-    tb.button(STR.BTN_OFF, function() G.destroy() end, TH.bad, 76)
-    UI.lists.MAIN = UI.list(page, LIST_TOP)
+    MAINP.buttons = toolbarRow(page, 0, {
+        {text = STR.BTN_SUMMARY, w = 110, fg = TH.cyan, bg = TH.chip, fn = function() UI.copyOrShow(STR.SUMMARY_TITLE, UI.summaryText()) end},
+        {text = STR.BTN_LIMITS, w = 92, fg = TH.text, bg = TH.chip, fn = function() UI.detail(STR.LIMITS_TITLE, STR.LIMITS) end},
+        {text = STR.BTN_STUDIO, w = 96, fg = TH.violet, bg = TH.btnViolet, fn = function() UI.detail(STR.STUDIO_TITLE, STUDIO_SCRIPT) end},
+        {text = string.format(STR.BTN_TELEPORT, teleportArmed() and STR.TELEPORT_ON or STR.TELEPORT_OFF), w = 128, fg = TH.violet, bg = TH.chip,
+            fn = function(b) if CAP.queue_on_teleport then confirmTeleportReload(b) else UI.toast(STR.NO_WRITEFILE) end end},
+        {text = STR.BTN_OFF, w = 62, fg = TH.bad, bg = TH.btnRed, fn = function() G.destroy() end},
+    })
+    MAINP.buttons[4].Visible = CAP.queue_on_teleport ~= nil
+    local C = STR.UI.COLS_MAIN
+    UI.lists.MAIN = UI.table(page, 0, CHIPS_Y, L.MAIN_W, PAGE_H - CHIPS_Y, {
+        {title = C[1], x = 14, w = 160, kind = "strong"}, {title = C[2], x = 180, w = 396, kind = "text", rich = true}})
 end
 
 local function renderMain()
     local items = {}
-    local function row(title, sub, color, tap) items[#items + 1] = {title = title, sub = sub, color = color, onTap = tap} end
+    local function row(k, v, tap) items[#items + 1] = {cells = {k, v}, onTap = tap} end
     local counts, active = {}, 0
     for _, e in ipairs(REG.remotes) do
         counts[e.class] = (counts[e.class] or 0) + 1
         if e.count > 0 then active = active + 1 end
     end
     local yn = function(b) return b and STR.YES or STR.NO end
-    row(rich(HEX.ok, STR.MAIN_ACTIVE) .. "  " .. rich(HEX.dim, LOG.paused and STR.MAIN_PAUSED or ""),
-        U.esc(string.format(STR.MAIN_EXEC, CAP.executor, yn(CAP.setclipboard), yn(CAP.writefile), yn(CAP.touch))), TH.ok)
-    row(rich(HEX.warn, string.format(STR.MAIN_MODE, MODE.def.label, FEED.label())), STR.MAIN_MODE_SUB, TH.warn)
-    row(rich(FEED.remote and HEX.ok or HEX.dim, string.format(STR.MAIN_FEED, FEED.remote and STR.MAIN_FEED_YES or STR.MAIN_FEED_NONE)),
-        string.format(STR.MAIN_FEED_SUB, FEED.label(), FEED.serverMode and FEED.label(FEED.serverMode) or "—", FEED.received, FEED.droppedByServer), TH.ok)
+    row(STR.MAIN_ACTIVE, U.esc(string.format(STR.MAIN_EXEC, CAP.executor, yn(CAP.setclipboard), yn(CAP.writefile), yn(CAP.touch))))
+    row(STR.MSG.MODE, U.esc(string.format(STR.MAIN_MODE, MODE.def.label, FEED.label())))
+    row(STR.UI.FEED_CARD, U.esc(string.format(STR.MAIN_FEED, FEED.remote and STR.MAIN_FEED_YES or STR.MAIN_FEED_NONE)))
     if MODE.capture or MODE.lastCapture then
         local status = MODE.capture and string.format(STR.CAPTURE_LEFT, MODE.captureLeft()) or
             string.format(STR.CAPTURE_DONE, MODE.lastCapture.data.total, MODE.lastCapture.data.dur)
-        row(rich(HEX.violet, string.format(STR.MAIN_CAPTURE, status)), STR.MAIN_CAPTURE_SUB, TH.violet, showCapture)
+        row(STR.MSG.CAPTURE, U.esc(status), showCapture)
     end
-    row(rich(HEX.cyan, string.format(STR.MAIN_COMM, #REG.remotes)),
-        string.format(STR.MAIN_COMM_SUB, counts.RemoteEvent or 0, counts.UnreliableRemoteEvent or 0, counts.RemoteFunction or 0,
-            counts.BindableEvent or 0, counts.BindableFunction or 0, active), TH.cyan, function() UI.setTab("REMOTES") end)
-    row(rich(HEX.warn, string.format(STR.MAIN_TOOLS, #REG.tools)) .. "   " .. rich(HEX.violet, string.format(STR.MAIN_BUTTONS, #REG.buttons)),
-        string.format(STR.MAIN_INST, REG.instAdded, REG.instRemoved, REG.scanned, REG.scanDone and "" or STR.SCANNING), TH.warn, function() UI.setTab("TOOLS") end)
-    row(rich(HEX.text, string.format(STR.MAIN_LOGS, LOG.total)),
-        string.format(STR.MAIN_LOGS_SUB, LOG.n, LOG.max, PERF.logRate, LOG.suppressed, LOG.droppedPaused), TH.violet, function() UI.setTab("LOGS") end)
-    row(rich(HEX.ok, string.format(STR.MAIN_PERF, PERF.fps)) .. "  " .. rich(HEX.cyan, PERF.ping and string.format(STR.MAIN_PING, PERF.ping) or STR.MAIN_PING_NA) ..
-        "  " .. rich(HEX.violet, PERF.mem and string.format(STR.MAIN_MEM, PERF.mem) or STR.MAIN_MEM_NA),
-        string.format(STR.MAIN_PERF_SUB, CONSOLE.errors, CONSOLE.warnings, G.internalErrors), TH.ok, function() UI.setTab("PERFORMANCE") end)
-    for _, e in ipairs(filteredLogs(CONFIG.MAIN_RECENT)) do items[#items + 1] = logRow(e) end
-    row(rich(HEX.dim, STR.MAIN_INFO), STR.MAIN_INFO_SUB, TH.line, function() UI.detail(STR.LIMITS_TITLE, STR.LIMITS) end)
+    row(string.format(STR.MAIN_COMM, #REG.remotes), string.format(STR.MAIN_COMM_SUB, counts.RemoteEvent or 0, counts.UnreliableRemoteEvent or 0,
+        counts.RemoteFunction or 0, counts.BindableEvent or 0, counts.BindableFunction or 0, active), function() UI.setTab("REMOTES") end)
+    row(string.format(STR.MAIN_TOOLS, #REG.tools) .. " · " .. string.format(STR.MAIN_BUTTONS, #REG.buttons),
+        string.format(STR.MAIN_INST, REG.instAdded, REG.instRemoved, REG.scanned, REG.scanDone and "" or STR.SCANNING), function() UI.setTab("TOOLS") end)
+    row(string.format(STR.MAIN_LOGS, LOG.total), string.format(STR.MAIN_LOGS_SUB, LOG.n, LOG.max, PERF.logRate, LOG.suppressed, LOG.droppedPaused),
+        function() UI.setTab("LOGS") end)
+    row(string.format(STR.MAIN_PERF, PERF.fps), string.format(STR.MAIN_PERF_SUB, CONSOLE.errors, CONSOLE.warnings, G.internalErrors),
+        function() UI.setTab("PERFORMANCE") end)
+    for _, e in ipairs(filteredLogs(CONFIG.MAIN_RECENT)) do
+        row(e.t .. "  " .. e.cat, U.esc(e.name .. "  " .. U.trunc(U.oneLine(e.args ~= "" and e.args or e.extra), 80)), function() UI.sel = e.id; eventCard(e) end)
+    end
+    row(STR.MAIN_INFO, STR.MAIN_INFO_SUB, function() UI.detail(STR.LIMITS_TITLE, STR.LIMITS) end)
     UI.lists.MAIN.set(items)
 end
 
@@ -2166,13 +2633,11 @@ local CLS_FILTERS, CLS_SHORT, SORTS = STR.CLS_FILTERS, STR.CLS_SHORT, STR.SORTS
 local remoteState = {q = "", cls = CFG.get("remoteCls", 1), sort = CFG.get("remoteSort", 1)}
 if not CLS_FILTERS[remoteState.cls] then remoteState.cls = 1 end
 if not SORTS[remoteState.sort] then remoteState.sort = 1 end
-
 local REMOTE_SORT = {
     Actividad = function(a, b) if a.count ~= b.count then return a.count > b.count end return a.name < b.name end,
     Nombre = function(a, b) return U.lower(a.name) < U.lower(b.name) end,
     Ruta = function(a, b) return a.path < b.path end,
 }
-
 local function filteredRemotes()
     local q, f = U.lower(remoteState.q), CLS_FILTERS[remoteState.cls]
     local out = {}
@@ -2183,7 +2648,6 @@ local function filteredRemotes()
     table.sort(out, REMOTE_SORT[SORTS[remoteState.sort]])
     return out
 end
-
 local function remoteText(e)
     local D = STR.DET
     return table.concat({
@@ -2194,55 +2658,58 @@ local function remoteText(e)
         "", e.observable and STR.REMOTE_OBS or STR.REMOTE_NOOBS, STR.REMOTE_NOSEND,
     }, "\n")
 end
-
+local function remoteCard(e)
+    local types = {}
+    for t in tostring(e.lastTypes or ""):gmatch("[^,%s]+") do types[#types + 1] = t end
+    UI.showCard({badge = e.class, title = e.name,
+        rows = {{STR.UI.D_TIME, e.last or "—", TH.text, true}, {STR.UI.D_LOC, e.loc, TH.text},
+            {STR.UI.D_DIR, e.observable and STR.DIR.S2C or STR.UI.NOT_OBS}, {STR.UI.D_COUNT, "×" .. e.count, TH.text, true}},
+        route = e.path, args = e.lastArgs ~= "" and e.lastArgs or STR.DET.R_NOARGS, types = types, copyText = remoteText(e), inst = e.inst,
+        inspect = function() UI.detail(e.class .. " · " .. e.name, remoteText(e), STR.REMOTE_SEE_LOGS, function() UI.logSearch(e.name) end) end})
+end
+local RPAGE = {}
 do
     local page = UI.pages.REMOTES
-    local tb = UI.toolbar(page)
-    local box = tb.search(STR.REMOTE_SEARCH, 150)
-    U.conn(box:GetPropertyChangedSignal("Text"), function() remoteState.q = box.Text; UI.force = true end, "buscar remotos")
-    tb.button(CLS_SHORT[CLS_FILTERS[remoteState.cls]], function(b)
-        remoteState.cls = remoteState.cls % #CLS_FILTERS + 1
-        b.Text = CLS_SHORT[CLS_FILTERS[remoteState.cls]]
-        CFG.set("remoteCls", remoteState.cls)
-        UI.force = true
-    end, TH.cyan, 116)
-    tb.button(string.format(STR.SORT_BTN, SORTS[remoteState.sort]), function(b)
-        remoteState.sort = remoteState.sort % #SORTS + 1
-        b.Text = string.format(STR.SORT_BTN, SORTS[remoteState.sort])
-        CFG.set("remoteSort", remoteState.sort)
-        UI.force = true
-    end, nil, 124)
-    tb.button(STR.COPY, function()
-        local t = {string.format(STR.REMOTES_COPY_HEAD, U.fullDate())}
-        for _, e in ipairs(filteredRemotes()) do t[#t + 1] = string.format("%-22s ×%-5d %-24s %s", e.class, e.count, e.loc, e.path) end
-        UI.copyOrShow(STR.REMOTES_TITLE, table.concat(t, "\n"))
-    end, TH.ok, 72)
-    UI.lists.REMOTES = UI.list(page, LIST_TOP)
+    UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.REMOTE_SEARCH, function(t) remoteState.q = t; UI.force = true end)
+    toolbarRow(page, 333.6, {
+        {text = string.format(STR.SORT_BTN, SORTS[remoteState.sort]), w = 120, fg = TH.text, bg = TH.chip, fn = function(b)
+            remoteState.sort = remoteState.sort % #SORTS + 1
+            b.Text = string.format(STR.SORT_BTN, SORTS[remoteState.sort])
+            CFG.set("remoteSort", remoteState.sort)
+            UI.force = true
+        end},
+        {text = STR.COPY, w = 54, fg = TH.ok, bg = TH.btnGreen, fn = function()
+            local t = {string.format(STR.REMOTES_COPY_HEAD, U.fullDate())}
+            for _, e in ipairs(filteredRemotes()) do t[#t + 1] = string.format("%-22s ×%-5d %-24s %s", e.class, e.count, e.loc, e.path) end
+            UI.copyOrShow(STR.REMOTES_TITLE, table.concat(t, "\n"))
+        end},
+    })
+    local labels = {}
+    for i, f in ipairs(CLS_FILTERS) do labels[i] = CLS_SHORT[f] end
+    RPAGE.chips = UI.chips(page, 0, CHIPS_Y, labels, function(i) return remoteState.cls == i end,
+        function(i) remoteState.cls = i; CFG.set("remoteCls", i) end)
+    local C = STR.UI.COLS_REMOTES
+    UI.lists.REMOTES = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H - TABLE_Y, {
+        {title = C[1], x = 14, w = 120, kind = "strong"}, {title = C[2], x = 140, w = 90, kind = "badge"},
+        {title = C[3], x = 270, w = 90, kind = "dim"}, {title = C[4], x = 362, w = 60, kind = "mono"},
+        {title = C[5], x = 424, w = 80, kind = "mono"}, {title = C[6], x = 506, w = 76, kind = "mono"}})
 end
-
 local function renderRemotes()
     local list = filteredRemotes()
     if #list == 0 then
-        UI.lists.REMOTES.set({{title = rich(HEX.dim, REG.scanDone and STR.NO_RESULTS or STR.SCANNING_T), sub = STR.NO_RESULTS_SUB}})
+        UI.lists.REMOTES.set({{cells = {REG.scanDone and STR.NO_RESULTS or STR.SCANNING_T, "", STR.NO_RESULTS_SUB, "", "", ""}}})
         return
     end
     UI.lists.REMOTES.setLazy(#list, function(i)
         local e = list[i]
-        local hex = CLASS_HEX[e.class] or HEX.text
-        local cnt = e.observable and rich(e.count > 0 and HEX.warn or HEX.dim, "  ×" .. e.count) or rich(HEX.dim, STR.REMOTE_NOT_OBS)
-        return {
-            title = rich(hex, e.name) .. cnt,
-            sub = U.esc(string.format(STR.REMOTE_ROW_SUB, e.class, e.loc, e.last and (" · " .. e.last) or "", e.path)),
-            color = hexColor(hex),
-            onTap = function() UI.detail(e.class .. " · " .. e.name, remoteText(e), STR.REMOTE_SEE_LOGS, function() UI.logSearch(e.name) end) end,
-        }
+        return {cells = {e.name, e.class, e.loc, e.observable and ("×" .. e.count) or STR.REMOTE_NOT_OBS, e.last or "—", e.path},
+            selected = UI.sel == e, onTap = function() UI.sel = e; remoteCard(e) end}
     end)
 end
 
 ---------------- TOOLS
 local TOOL_MODES = STR.TOOL_MODES
-local toolState = {mode = 1, q = "", results = {}, searching = false, modeBtn = nil}
-
+local toolState = {mode = 1, q = "", results = {}, searching = false}
 local function runSearch(q)
     if toolState.searching then return end
     q = U.lower(q)
@@ -2270,76 +2737,64 @@ local function runSearch(q)
         UI.toast(string.format(STR.FOUND, #toolState.results, #toolState.results >= CONFIG.MAX_SEARCH and string.format(STR.FOUND_LIMIT, CONFIG.MAX_SEARCH) or ""))
     end)
 end
-
-local function setToolMode(i)
-    toolState.mode = i
-    if toolState.modeBtn then toolState.modeBtn.Text = TOOL_MODES[i] end
-    UI.force = true
-end
-
+local TPAGE = {}
 do
     local page = UI.pages.TOOLS
-    local tb = UI.toolbar(page)
-    toolState.modeBtn = tb.button(TOOL_MODES[1], function() setToolMode(toolState.mode % #TOOL_MODES + 1) end, TH.warn, 116)
-    local box = tb.search(STR.TOOL_FILTER, 140)
-    U.conn(box:GetPropertyChangedSignal("Text"), function() toolState.q = box.Text; UI.force = true end, "filtrar tools")
-    U.conn(box.FocusLost, function(enter) if enter and toolState.mode == 3 then runSearch(box.Text) end end, "buscar enter")
-    tb.button(STR.SEARCH, function()
-        if toolState.mode ~= 3 then setToolMode(3) end
-        runSearch(box.Text)
-    end, TH.cyan, 72)
-    tb.button(STR.COPY, function()
-        local t = {string.format(STR.DET.TOOLS_HEAD, TOOL_MODES[toolState.mode])}
-        for _, it in ipairs(UI.lists.TOOLS.all()) do
-            t[#t + 1] = ((it.title or ""):gsub("<[^>]->", "")) .. " · " .. ((it.sub or ""):gsub("<[^>]->", ""))
-        end
-        UI.copyOrShow(TOOL_MODES[toolState.mode], table.concat(t, "\n"))
-    end, TH.ok, 72)
-    UI.lists.TOOLS = UI.list(page, LIST_TOP)
+    local tb = UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.TOOL_FILTER, function(t) toolState.q = t; UI.force = true end)
+    U.conn(tb.FocusLost, function(enter) if enter and toolState.mode == 3 then runSearch(tb.Text) end end, "buscar enter")
+    toolbarRow(page, 333.6, {
+        {text = STR.SEARCH, w = 64, fg = TH.cyan, bg = TH.chip, fn = function() toolState.mode = 3; TPAGE.chips.refresh(); runSearch(tb.Text) end},
+        {text = STR.COPY, w = 54, fg = TH.ok, bg = TH.btnGreen, fn = function()
+            local t = {string.format(STR.DET.TOOLS_HEAD, TOOL_MODES[toolState.mode])}
+            for _, it in ipairs(UI.lists.TOOLS.all()) do t[#t + 1] = it.title end
+            UI.copyOrShow(TOOL_MODES[toolState.mode], table.concat(t, "\n"))
+        end},
+    })
+    TPAGE.chips = UI.chips(page, 0, CHIPS_Y, TOOL_MODES, function(i) return toolState.mode == i end, function(i) toolState.mode = i end)
+    local C = STR.UI.COLS_TOOLS
+    UI.lists.TOOLS = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H - TABLE_Y, {
+        {title = C[1], x = 14, w = 150, kind = "strong"}, {title = C[2], x = 170, w = 90, kind = "text"},
+        {title = C[3], x = 262, w = 120, kind = "dim"}, {title = C[4], x = 384, w = 198, kind = "mono"}})
 end
-
+local function objectCard(inst, title, rows)
+    UI.showCard({badge = "Instancia", title = title, rows = rows, route = U.path(inst), args = "", types = {}, copyText = U.path(inst), inst = inst})
+end
 local TOOL_RENDER = {}
 TOOL_RENDER[1] = function(items, q)
     for _, e in ipairs(REG.tools) do
         if U.match(q, e.name, e.owner, e.path) then
-            local stHex = (e.state == STR.TOOL_STATE_EQUIPPED) and HEX.ok or HEX.warn
-            items[#items + 1] = {title = rich(HEX.warn, e.name) .. "  " .. rich(stHex, tostring(e.state)),
-                sub = U.esc(string.format(STR.DET.TOOL_SUB, e.class, tostring(e.owner), e.equips, e.path)),
-                color = TH.warn, onTap = function() openInspector(e.inst) end}
+            items[#items + 1] = {cells = {e.name, tostring(e.state), tostring(e.owner), string.format("×%d · %s", e.equips, e.path)},
+                colors = {nil, (e.state == STR.TOOL_STATE_EQUIPPED) and TH.ok or TH.warn},
+                onTap = function() objectCard(e.inst, e.name, {{STR.UI.D_PLAYER, tostring(e.owner)}, {STR.UI.D_DIR, tostring(e.state)}}) end}
         end
     end
-    if #items == 0 then items[1] = {title = rich(HEX.dim, STR.NO_TOOLS), sub = STR.NO_TOOLS_SUB} end
+    if #items == 0 then items[1] = {cells = {STR.NO_TOOLS, "", "", STR.NO_TOOLS_SUB}} end
 end
 TOOL_RENDER[2] = function(items)
     for _, c in ipairs(REG.containers) do
-        items[#items + 1] = {title = rich(HEX.cyan, c.name) .. "  " .. rich(HEX.text, string.format(STR.CONT_ROW, c.count)),
-            sub = string.format(STR.CONT_SUB, c.added, c.removed), color = TH.cyan, onTap = function() openInspector(c.inst) end}
+        items[#items + 1] = {cells = {c.name, string.format(STR.CONT_ROW, c.count), "", string.format(STR.CONT_SUB, c.added, c.removed)},
+            onTap = function() openInspector(c.inst) end}
     end
-    items[#items + 1] = {title = rich(HEX.dim, STR.SERVER_ONLY), sub = STR.SERVER_ONLY_SUB, color = TH.line}
-    items[#items + 1] = {title = rich(REG.logWorkspaceInstances and HEX.ok or HEX.dim, string.format(STR.WS_LOG, REG.logWorkspaceInstances and STR.DET.YES_UP or STR.DET.NO_UP)),
-        sub = STR.WS_LOG_SUB, color = TH.violet, onTap = function() REG.logWorkspaceInstances = not REG.logWorkspaceInstances; UI.force = true end}
+    items[#items + 1] = {cells = {STR.SERVER_ONLY, "", "", STR.SERVER_ONLY_SUB}}
+    items[#items + 1] = {cells = {string.format(STR.WS_LOG, REG.logWorkspaceInstances and STR.DET.YES_UP or STR.DET.NO_UP), "", "", STR.WS_LOG_SUB},
+        onTap = function() REG.logWorkspaceInstances = not REG.logWorkspaceInstances; UI.force = true end}
 end
 TOOL_RENDER[3] = function(items)
-    if toolState.searching then items[1] = {title = rich(HEX.cyan, STR.SEARCHING), sub = STR.SEARCHING_SUB} end
+    if toolState.searching then items[1] = {cells = {STR.SEARCHING, "", "", STR.SEARCHING_SUB}} end
     for _, r in ipairs(toolState.results) do
         local ok, cls, nm = pcall(function() return r.inst.ClassName, r.inst.Name end)
-        if ok then
-            items[#items + 1] = {title = rich(HEX.text, nm) .. "  " .. rich(HEX.dim, cls), sub = U.esc(r.loc .. " · " .. U.path(r.inst)),
-                color = TH.violet, onTap = function() openInspector(r.inst) end}
-        end
+        if ok then items[#items + 1] = {cells = {nm, cls, r.loc, U.path(r.inst)}, onTap = function() openInspector(r.inst) end} end
     end
-    if #items == 0 then items[1] = {title = rich(HEX.dim, STR.SEARCH_HINT), sub = string.format(STR.SEARCH_HINT_SUB, CONFIG.MAX_SEARCH)} end
+    if #items == 0 then items[1] = {cells = {STR.SEARCH_HINT, "", "", string.format(STR.SEARCH_HINT_SUB, CONFIG.MAX_SEARCH)}} end
 end
 TOOL_RENDER[4] = function(items)
-    for _, w in ipairs(WATCH.list) do
-        items[#items + 1] = {title = rich(HEX.pink, w.name), sub = U.esc(U.path(w.inst)), color = TH.violet, onTap = function() openInspector(w.inst) end}
-    end
-    if #items == 0 then items[1] = {title = rich(HEX.dim, STR.NO_WATCH), sub = STR.NO_WATCH_SUB} end
+    for _, w in ipairs(WATCH.list) do items[#items + 1] = {cells = {w.name, "", "", U.path(w.inst)}, onTap = function() openInspector(w.inst) end} end
+    if #items == 0 then items[1] = {cells = {STR.NO_WATCH, "", "", STR.NO_WATCH_SUB}} end
 end
-
 local function renderTools()
     local items = {}
     TOOL_RENDER[toolState.mode](items, U.lower(toolState.q))
+    TPAGE.chips.refresh()
     UI.lists.TOOLS.set(items)
 end
 
@@ -2347,7 +2802,6 @@ end
 local BTN_FILTERS = STR.BTN_FILTERS
 local btnState = {q = "", f = 1}
 local MAX_GUI_DEPTH = 40
-
 local function effVisible(inst)
     local ok, r = pcall(function()
         local p, depth = inst, 0
@@ -2361,7 +2815,6 @@ local function effVisible(inst)
     end)
     return ok and r
 end
-
 local function buttonText(e)
     local D, inst = STR.DET, e.inst
     local function g(p) local ok, v = pcall(function() return inst[p] end) return ok and v or nil end
@@ -2375,28 +2828,26 @@ local function buttonText(e)
         "", D.B_NOTE,
     }, "\n")
 end
-
+local BPAGE = {}
 do
     local page = UI.pages.BUTTONS
-    local tb = UI.toolbar(page)
-    local box = tb.search(STR.BTN_SEARCH, 150)
-    U.conn(box:GetPropertyChangedSignal("Text"), function() btnState.q = box.Text; UI.force = true end, "buscar botones")
-    tb.button(BTN_FILTERS[1], function(b)
-        btnState.f = btnState.f % #BTN_FILTERS + 1
-        b.Text = BTN_FILTERS[btnState.f]
-        UI.force = true
-    end, TH.violet, 90)
-    tb.button(STR.COPY, function()
-        local t = {STR.DET.BUTTONS_HEAD}
-        for _, e in ipairs(REG.buttons) do
-            local okt, tx = pcall(function() return e.inst.Text end)
-            t[#t + 1] = string.format("%-12s %-5s ×%-4d %s  \"%s\"", e.class, effVisible(e.inst) and STR.DET.VIS_SHORT or STR.DET.HID_SHORT, e.clicks, U.path(e.inst), okt and U.trunc(tx or "", 40) or "")
-        end
-        UI.copyOrShow(STR.DET.BUTTONS_TITLE, table.concat(t, "\n"))
-    end, TH.ok, 72)
-    UI.lists.BUTTONS = UI.list(page, LIST_TOP)
+    UI.search(page, 0, 0, L.SEARCH_W, L.SEARCH_H, STR.BTN_SEARCH, function(t) btnState.q = t; UI.force = true end)
+    toolbarRow(page, 333.6, {
+        {text = STR.COPY, w = 54, fg = TH.ok, bg = TH.btnGreen, fn = function()
+            local t = {STR.DET.BUTTONS_HEAD}
+            for _, e in ipairs(REG.buttons) do
+                local okt, tx = pcall(function() return e.inst.Text end)
+                t[#t + 1] = string.format("%-12s %-5s ×%-4d %s  \"%s\"", e.class, effVisible(e.inst) and STR.DET.VIS_SHORT or STR.DET.HID_SHORT, e.clicks, U.path(e.inst), okt and U.trunc(tx or "", 40) or "")
+            end
+            UI.copyOrShow(STR.DET.BUTTONS_TITLE, table.concat(t, "\n"))
+        end},
+    })
+    BPAGE.chips = UI.chips(page, 0, CHIPS_Y, BTN_FILTERS, function(i) return btnState.f == i end, function(i) btnState.f = i end)
+    local C = STR.UI.COLS_BUTTONS
+    UI.lists.BUTTONS = UI.table(page, 0, TABLE_Y, L.MAIN_W, PAGE_H - TABLE_Y, {
+        {title = C[1], x = 14, w = 150, kind = "strong"}, {title = C[2], x = 170, w = 110, kind = "dim"},
+        {title = C[3], x = 282, w = 70, kind = "text"}, {title = C[4], x = 354, w = 50, kind = "mono"}, {title = C[5], x = 406, w = 176, kind = "mono"}})
 end
-
 local function renderButtons()
     local q, f = U.lower(btnState.q), BTN_FILTERS[btnState.f]
     local list = {}
@@ -2414,91 +2865,21 @@ local function renderButtons()
         if a.vis ~= b.vis then return a.vis end
         return a.e.path < b.e.path
     end)
-    if #list == 0 then
-        UI.lists.BUTTONS.set({{title = rich(HEX.dim, STR.NO_BUTTONS), sub = STR.NO_BUTTONS_SUB}})
-        return
-    end
+    BPAGE.chips.refresh()
+    if #list == 0 then UI.lists.BUTTONS.set({{cells = {STR.NO_BUTTONS, "", "", "", STR.NO_BUTTONS_SUB}}}) return end
     UI.lists.BUTTONS.setLazy(#list, function(i)
         local it, e = list[i], list[i].e
-        return {
-            title = rich(it.vis and HEX.violet or HEX.dim, (it.tx ~= "" and U.trunc(it.tx, 40) or e.name)) ..
-                (it.tx ~= "" and ("  " .. rich(HEX.dim, e.name)) or "") .. (e.clicks > 0 and rich(HEX.warn, "  ×" .. e.clicks) or ""),
-            sub = U.esc(e.class .. " · " .. (it.vis and STR.VISIBLE or STR.HIDDEN) .. " · " .. e.path),
-            color = it.vis and TH.violet or TH.line,
-            onTap = function() UI.detail(e.class .. " · " .. e.name, buttonText(e), STR.INSPECT, function() openInspector(e.inst) end) end,
-        }
+        return {cells = {it.tx ~= "" and U.trunc(it.tx, 40) or e.name, e.name, it.vis and STR.VISIBLE or STR.HIDDEN, "×" .. e.clicks, e.path},
+            colors = {it.vis and TH.text or TH.dim, nil, it.vis and TH.ok or TH.dim},
+            onTap = function()
+                UI.showCard({badge = "Botón", title = e.name, rows = {{STR.UI.D_COUNT, "×" .. e.clicks, TH.text, true}, {STR.UI.D_TEXT, it.tx}},
+                    route = e.path, args = "", types = {}, copyText = buttonText(e), inst = e.inst,
+                    inspect = function() UI.detail(e.class .. " · " .. e.name, buttonText(e), STR.INSPECT, function() openInspector(e.inst) end) end})
+            end}
     end)
 end
 
----------------- LOGS
-local function logsAsText(list)
-    local t = {string.format(STR.LOGS_COPY_HEAD, U.fullDate(), MODE.def.label, FEED.label())}
-    for i = #list, 1, -1 do t[#t + 1] = LOG.format(list[i]) end
-    return table.concat(t, "\n")
-end
-
-local function exportLogs()
-    local list = filteredLogs()
-    local base = "logs_" .. U.fileStamp()
-    local ok, where = U.export(base .. ".txt", "PlaceId " .. tostring(game.PlaceId) .. "\n" .. logsAsText(list))
-    local records = {}
-    for i = #list, 1, -1 do records[#records + 1] = LOG.toRecord(list[i]) end
-    local json = U.json({version = CONFIG.VERSION, placeId = game.PlaceId, mode = MODE.def.id, players = FEED.filter, logs = records})
-    if ok and json then U.export(base .. ".json", json) end
-    UI.toast(ok and string.format(STR.SAVED, where) or string.format(STR.EXPORT_FAIL, tostring(where)))
-end
-
-local function setPaused(paused, b)
-    LOG.paused = paused
-    b.Text = paused and STR.RESUME or STR.PAUSE
-    b.TextColor3 = paused and TH.warn or TH.text
-    statusDot.BackgroundColor3 = paused and TH.warn or TH.ok
-    fabDot.BackgroundColor3 = paused and TH.warn or TH.ok
-    UI.force = true
-end
-
-do
-    local page = UI.pages.LOGS
-    local tb = UI.toolbar(page)
-    local box = tb.search(STR.LOG_SEARCH, 140)
-    logState.box = box
-    U.conn(box:GetPropertyChangedSignal("Text"), function() logState.q = box.Text; UI.force = true end, "buscar logs")
-    addSharedControls(tb)
-    logState.catBtn = tb.button(string.format(STR.CAT_BTN, CATS[logState.cat]), function(b)
-        logState.cat = logState.cat % #CATS + 1
-        b.Text = string.format(STR.CAT_BTN, CATS[logState.cat])
-        CFG.set("logCat", logState.cat)
-        UI.force = true
-    end, TH.cyan, 132)
-    tb.button(STR.PAUSE, function(b) setPaused(not LOG.paused, b) end, nil, 84)
-    tb.button(STR.CLEAR, function() LOG.clear(); UI.force = true; UI.toast(STR.CLEARED) end, TH.bad, 76)
-    tb.button(STR.COPY, function() UI.copyOrShow(STR.LOGS_TITLE, logsAsText(filteredLogs())) end, TH.ok, 72)
-    tb.button(STR.EXPORT, exportLogs, TH.violet, 84)
-    UI.lists.LOGS = UI.list(page, LIST_TOP)
-end
-
-local function renderLogs()
-    local list = filteredLogs()
-    if #list == 0 then
-        local filtered = MODE.def.id ~= "normal" or FEED.filter ~= "all"
-        UI.lists.LOGS.set({{title = rich(HEX.dim, LOG.paused and STR.LOGS_PAUSED or STR.NO_LOGS),
-            sub = filtered and string.format(STR.MODE_EMPTY_SUB, MODE.def.label, FEED.label()) or STR.NO_LOGS_SUB}})
-        return
-    end
-    UI.lists.LOGS.setLazy(#list, function(i) return logRow(list[i]) end)
-end
-
 ---------------- PERFORMANCE
-local BARS = {"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
-local function spark(hist)
-    local maxv = 1
-    for _, v in ipairs(hist) do if v > maxv then maxv = v end end
-    local t = {}
-    for _, v in ipairs(hist) do t[#t + 1] = BARS[math.clamp(math.floor(v / maxv * (#BARS - 1)) + 1, 1, #BARS)] end
-    return table.concat(t)
-end
-local function fmt(v, f, unit) if v == nil then return STR.NA end return string.format(f, v) .. (unit or "") end
-
 function UI.errorsText()
     if #G.errors == 0 then return STR.NO_INTERNAL end
     local t = {}
@@ -2509,7 +2890,6 @@ function UI.errorsText()
     end
     return table.concat(t, "\n")
 end
-
 do
     local limiter = {}
     G.onInternalError = function(where, err)
@@ -2518,7 +2898,6 @@ do
         end
     end
 end
-
 function UI.perfText()
     local P = STR.PERF
     return table.concat({
@@ -2535,45 +2914,212 @@ function UI.perfText()
         string.format(P.T_LOGS, LOG.total, PERF.logRate, G.internalErrors),
     }, "\n")
 end
-
 do
     local page = UI.pages.PERFORMANCE
-    local tb = UI.toolbar(page)
-    tb.button(STR.BTN_PERF_COPY, function() UI.copyOrShow(STR.PERF_TITLE, UI.perfText()) end, TH.cyan, 124)
-    tb.button(STR.BTN_PERF_NOTES, function() UI.detail(STR.NOTES_TITLE, STR.PERF_NOTES) end, TH.violet, 150)
-    UI.lists.PERFORMANCE = UI.list(page, LIST_TOP)
+    toolbarRow(page, 0, {
+        {text = STR.BTN_PERF_COPY, w = 118, fg = TH.cyan, bg = TH.chip, fn = function() UI.copyOrShow(STR.PERF_TITLE, UI.perfText()) end},
+        {text = STR.BTN_PERF_NOTES, w = 140, fg = TH.violet, bg = TH.btnViolet, fn = function() UI.detail(STR.NOTES_TITLE, STR.PERF_NOTES) end},
+    })
+    local C = STR.UI.COLS_PERF
+    UI.lists.PERFORMANCE = UI.table(page, 0, CHIPS_Y, L.MAIN_W, PAGE_H - CHIPS_Y, {
+        {title = C[1], x = 14, w = 130, kind = "strong"}, {title = C[2], x = 150, w = 120, kind = "mono"}, {title = C[3], x = 276, w = 306, kind = "dim"}})
 end
-
 local function renderPerf()
     local P = STR.PERF
     local items = {}
-    local function row(t, s, c, tap) items[#items + 1] = {title = t, sub = s, color = c, onTap = tap} end
-    local fpsHex = PERF.fps >= 50 and HEX.ok or (PERF.fps >= 30 and HEX.warn or HEX.bad)
-    local graph = MODE.def.graph and (spark(PERF.hist) .. string.format(P.GRAPH, CONFIG.PERF_HISTORY)) or P.NO_GRAPH
-    row(rich(fpsHex, string.format(P.FPS, PERF.fps)) .. "  " .. rich(HEX.dim, string.format(P.FRAME, fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.0f", " ms"))),
-        graph, hexColor(fpsHex, TH.ok))
-    local pingHex = (PERF.ping and PERF.ping > CONFIG.PING_ALERT_MS) and HEX.bad or HEX.cyan
-    row(rich(pingHex, string.format(P.PING, fmt(PERF.ping, "%.0f", " ms"))), U.esc(PERF.pingSrc ~= "" and string.format(P.PING_SRC, PERF.pingSrc) or P.PING_NA), TH.cyan)
-    row(rich(HEX.violet, string.format(P.MEM, fmt(PERF.mem, "%.0f", " MB"))), string.format(P.MEM_SUB, fmt(PERF.memScript, "%.0f", " MB"), fmt(PERF.luaHeap, "%.1f", " MB")), TH.violet)
-    row(rich(HEX.blue, string.format(P.NET, fmt(PERF.recv, "%.1f", " KB/s"), fmt(PERF.send, "%.1f", " KB/s"))),
-        string.format(P.NET_SUB, fmt(PERF.physFps, "%.0f", " FPS"), fmt(PERF.instCount, "%.0f")), TH.line)
-    row(rich(FEED.stats and HEX.ok or HEX.dim, P.SERVER), U.esc(FEED.stats or P.SERVER_NONE), TH.ok)
-    row(rich(CONSOLE.errors > 0 and HEX.bad or HEX.ok, string.format(P.ERR, CONSOLE.errors)) .. "  " .. rich(HEX.warn, string.format(P.WARN, CONSOLE.warnings)),
-        P.CONSOLE_SUB, TH.bad, function()
-            for i, c in ipairs(CATS) do if c == "Consola" then logState.cat = i end end
-            if logState.catBtn then logState.catBtn.Text = string.format(STR.CAT_BTN, "Consola") end
-            UI.logSearch("")
-        end)
-    row(rich(HEX.text, string.format(P.OBJECTS, #REG.remotes, #REG.tools, #REG.buttons)),
-        string.format(P.OBJECTS_SUB, LOG.total, PERF.logRate, LOG.suppressed), TH.line)
-    row(rich(HEX.dim, string.format(P.MONITOR, #G.conns, REG.pending(), math.floor(REG.qMax))),
-        string.format(P.MONITOR_SUB, PERF.renderMs, PERF.renderRate, REG.qProcessed, CONFIG.QUEUE_BUDGET_MS, MODE.def.label), TH.line)
-    row(rich(G.internalErrors > 0 and HEX.bad or HEX.ok, string.format(P.INTERNAL, G.internalErrors)),
-        G.internalErrors > 0 and U.esc(U.trunc(U.oneLine(G.lastInternalError), 150)) or P.INTERNAL_NONE, TH.line,
-        function() UI.detail(string.format(STR.ERRORS_TITLE, CONFIG.MAX_ERRORS), UI.errorsText()) end)
-    row(rich(HEX.dim, P.INFO), P.INFO_SUB, TH.line, function() UI.detail(STR.NOTES_TITLE, STR.PERF_NOTES) end)
+    local function row(k, v, d, tap, color) items[#items + 1] = {cells = {k, v, d}, onTap = tap, colors = {nil, color}} end
+    row(STR.UI.M_FPS, fmt(PERF.fps, "%.0f"), string.format(P.FRAME, fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.0f", " ms")), nil,
+        PERF.fps >= 50 and TH.ok or (PERF.fps >= 30 and TH.warn or TH.bad))
+    row(STR.UI.M_PING, fmt(PERF.ping, "%.0f", " ms"), PERF.pingSrc ~= "" and string.format(P.PING_SRC, PERF.pingSrc) or P.PING_NA, nil,
+        (PERF.ping and PERF.ping > CONFIG.PING_ALERT_MS) and TH.bad or TH.cyan)
+    row(STR.UI.M_MEM, fmt(PERF.mem, "%.0f", " MB"), string.format(P.MEM_SUB, fmt(PERF.memScript, "%.0f", " MB"), fmt(PERF.luaHeap, "%.1f", " MB")), nil, TH.violet)
+    row(STR.UI.M_NET, fmt(PERF.recv, "%.1f", " KB/s"), string.format(P.NET_SUB, fmt(PERF.physFps, "%.0f", " FPS"), fmt(PERF.instCount, "%.0f")), nil, TH.blue)
+    row(P.SERVER, FEED.stats and "ok" or "—", FEED.stats or P.SERVER_NONE)
+    row(STR.UI.M_CONSOLE, string.format(P.ERR, CONSOLE.errors), string.format(P.WARN, CONSOLE.warnings) .. " · " .. P.CONSOLE_SUB, function()
+        for i, c in ipairs(CHIPS) do if c == "Consola" then logState.chip = i end end
+        UI.logSearch("")
+    end, CONSOLE.errors > 0 and TH.bad or TH.ok)
+    row(STR.TABS[2], tostring(#REG.remotes), string.format(P.OBJECTS, #REG.remotes, #REG.tools, #REG.buttons))
+    row(STR.MSG.MODE, MODE.def.label, string.format(P.MONITOR, #G.conns, REG.pending(), math.floor(REG.qMax)) .. " · " ..
+        string.format("%.2f ms", PERF.renderMs))
+    row(STR.MSG.INTERNAL, tostring(G.internalErrors), G.internalErrors > 0 and U.trunc(U.oneLine(G.lastInternalError), 150) or P.INTERNAL_NONE,
+        function() UI.detail(string.format(STR.ERRORS_TITLE, CONFIG.MAX_ERRORS), UI.errorsText()) end, G.internalErrors > 0 and TH.bad or TH.ok)
+    row(P.INFO, "", P.INFO_SUB, function() UI.detail(STR.NOTES_TITLE, STR.PERF_NOTES) end)
     UI.lists.PERFORMANCE.set(items)
 end
+
+---------------- Cromo común (barra de título, lateral, tarjetas, feed, estado): se refresca siempre que se dibuja
+function UI.renderChrome()
+    -- Barra de título
+    local feedOn = FEED.remote ~= nil
+    W.pillDot.BackgroundColor3 = feedOn and TH.ok or TH.dotOff
+    W.pillText.Text = not feedOn and STR.UI.FEED_PILL_NONE or
+        string.format((FEED.serverMode ~= nil and FEED.label(FEED.serverMode) == FEED.label()) and STR.UI.FEED_PILL or STR.UI.FEED_PILL_PENDING, U.esc(FEED.label()))
+    W.scaleBtn.Text = UI.scaleLabel()
+    -- Lateral
+    local counts = {REMOTES = #REG.remotes, TOOLS = #REG.tools, BUTTONS = #REG.buttons, LOGS = LOG.total}
+    for name, t in pairs(SIDE.tabs) do
+        local on = name == UI.tab
+        t.b.BackgroundTransparency = on and 0 or 1
+        t.bar.Visible = on
+        t.name.TextColor3 = on and TH.cyan or TH.dim
+        setFont(t.name, on and FONT.semi or FONT.sans)
+        t.count.Text = counts[name] and fmtInt(counts[name]) or ""
+        t.count.TextColor3 = on and TH.cyan or TH.dim
+    end
+    local segOn = FEED.filter == "all" and 1 or (FEED.filter == "me" and 2 or 3)
+    for i, b in ipairs(SIDE.seg) do
+        b.BackgroundTransparency = (i == segOn) and 0 or 1
+        b.TextColor3 = (i == segOn) and TH.cyan or TH.dim
+        if i == 3 then b.Text = (segOn == 3) and FEED.label() or STR.UI.SEG[3] end
+    end
+    for i, m in ipairs(SIDE.modes) do
+        local on = i == MODE.index
+        m.b.BackgroundTransparency = on and 0 or 1
+        m.st.Transparency = on and 0 or 1
+        m.dot.BackgroundColor3 = on and TH.cyan or TH.dotOff
+    end
+    local yn = function(b) return b and STR.YES or STR.NO end
+    local vals = {CAP.executor:match("^(%S+)") or CAP.executor, yn(CAP.setclipboard), yn(CAP.writefile), yn(CAP.writefile ~= nil and CAP.readfile ~= nil)}
+    for i, l in ipairs(SIDE.info) do
+        l.Text = vals[i]
+        l.TextColor3 = (vals[i] == STR.YES) and TH.ok or ((vals[i] == STR.NO) and TH.bad or TH.text)
+    end
+    -- Tarjetas de métricas
+    local U_ = STR.UI
+    setMetric(METRIC.fps, fmt(PERF.fps, "%.0f"), string.format(U_.M_FPS_SUB, fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.0f", " ms")), MODE.def.graph and PERF.hist)
+    setMetric(METRIC.ping, fmt(PERF.ping, "%.0f", " ms"), PERF.pingSrc ~= "" and PERF.pingSrc or STR.PERF.PING_NA, MODE.def.graph and PERF.pingHist)
+    setMetric(METRIC.mem, fmt(PERF.mem, "%.0f", " MB"), string.format(U_.M_MEM_SUB, fmt(PERF.memScript, "%.0f", " MB"), fmt(PERF.luaHeap, "%.1f", " MB")), MODE.def.graph and PERF.memHist)
+    setMetric(METRIC.net, fmt(PERF.recv, "%.1f", " KB/s"), string.format(U_.M_NET_SUB, fmt(PERF.send, "%.1f", " KB/s")), MODE.def.graph and PERF.netHist)
+    setMetric(METRIC.eps, string.format("%.1f", PERF.epsNow or 0), string.format(U_.M_EPS_SUB, LOG.suppressed), MODE.def.graph and PERF.eps)
+    setMetric(METRIC.console, string.format(U_.M_CONSOLE_VAL, CONSOLE.errors), string.format(U_.M_CONSOLE_SUB, CONSOLE.warnings), MODE.def.graph and PERF.consoleHist)
+    -- Feed del servidor
+    local sec = FEED.sec
+    FC.v1.Text = string.format(U_.FEED_PER_S, sec.lastTotal, CONFIG.FEED_VIEWER_LIMIT)
+    FC.bar1(sec.lastTotal / CONFIG.FEED_VIEWER_LIMIT)
+    FC.k2.Text = sec.lastTopName and string.format(U_.FEED_SENDER, sec.lastTopName) or U_.FEED_SENDER_NONE
+    FC.v2.Text = string.format(U_.FEED_PER_S, sec.lastTop, CONFIG.FEED_SENDER_LIMIT)
+    FC.bar2(sec.lastTop / CONFIG.FEED_SENDER_LIMIT)
+    FC.v3.Text = tostring(FEED.droppedByServer)
+    FC.v4.Text = FEED.modeRemote and FEED.label(FEED.serverMode or FEED.filter) or "—"
+    -- Barra de estado
+    ST.dot.BackgroundColor3 = LOG.paused and TH.warn or TH.ok
+    ST.live.Text = LOG.paused and U_.ST_PAUSED or U_.ST_LIVE
+    ST.live.TextColor3 = LOG.paused and TH.warn or TH.ok
+    local left = {string.format(U_.ST_REMOTES, #REG.remotes), string.format(U_.ST_LOGS, fmtInt(LOG.total)), string.format(U_.ST_SPAM, LOG.suppressed),
+        string.format(U_.ST_QUEUE, REG.pending(), math.floor(REG.qMax)), string.format(U_.ST_ERRORS, G.internalErrors)}
+    for i, t in ipairs(ST.left) do t.Text = left[i] end
+    local leftCap = MODE.captureLeft()
+    local rightTxt = {string.format(U_.ST_MODE, MODE.def.label .. (leftCap and (" " .. leftCap .. "s") or "")), string.format(U_.ST_FPS, PERF.fps),
+        string.format(U_.ST_PING, fmt(PERF.ping, "%.0f", " ms")), string.format(U_.ST_VER, "1.2")}
+    for i, t in ipairs(ST.right) do t.Text = rightTxt[i] end
+end
+
+---------------- Abrir / cerrar / pestañas / escala / minimizar / arrastre
+function UI.setTab(name)
+    UI.tab = name
+    CFG.set("tab", name)
+    detail.Visible = false
+    picker.Visible = false
+    for n, p in pairs(UI.pages) do p.Visible = (n == name) end
+    UI.force = true
+end
+for name, t in pairs(SIDE.tabs) do U.conn(t.b.Activated, function() UI.setTab(name) end, "pestaña " .. name) end
+
+function UI.scaleLabel(sc) return string.format(STR.UI.SCALE, math.floor((sc or UI.scale()) * 100 + 0.5)) end
+
+local function fitsScreen()
+    local ss, sc = screenSize(), UI.scale()
+    local h = UI.collapsed and L.TITLE_H or L.PANEL_H
+    return L.PANEL_W * sc <= ss.X and h * sc <= ss.Y, ss, sc, h
+end
+
+-- Coloca el panel: si cabe, se arrastra y queda dentro de la pantalla; si no,
+-- el visor permite recorrerlo con un dedo (tamaño exacto, sin recortes).
+function UI.applyLayout()
+    local fits, ss, sc, h = fitsScreen()
+    panel.Size = UDim2.fromOffset(L.PANEL_W, h)
+    sidebar.Visible, main.Visible, right.Visible, statusBar.Visible = not UI.collapsed, not UI.collapsed, not UI.collapsed, not UI.collapsed
+    local pw, ph = L.PANEL_W * sc, h * sc
+    local margin = CONFIG.L.RADIUS
+    local x, y
+    if pw <= ss.X then x = math.clamp(CFG.get("x", (ss.X - pw) / 2), 0, ss.X - pw) else x = margin end
+    if ph <= ss.Y then y = math.clamp(CFG.get("y", (ss.Y - ph) / 2), 0, ss.Y - ph) else y = margin end
+    panel.Position = UDim2.fromOffset(math.floor(x), math.floor(y))
+    viewport.CanvasSize = UDim2.fromOffset(pw > ss.X and (pw + 2 * margin) or 0, ph > ss.Y and (ph + 2 * margin) or 0)
+    viewport.ScrollingEnabled = not fits
+    viewport.Active = not fits
+    panel.Active = fits -- si no cabe, el arrastre sobre el panel desplaza el visor
+    pcall(function()
+        local f = fab
+        local fs = f.AbsoluteSize
+        f.Position = UDim2.fromOffset(math.clamp(f.Position.X.Offset, 0, math.max(0, ss.X - fs.X)), math.clamp(f.Position.Y.Offset, 0, math.max(0, ss.Y - fs.Y)))
+    end)
+end
+
+function UI.cycleScale()
+    local cur, nextS = UI.scale(), CONFIG.SCALES[1]
+    for i, v in ipairs(CONFIG.SCALES) do if math.abs(v - cur) < 0.01 then nextS = CONFIG.SCALES[i % #CONFIG.SCALES + 1] end end
+    uiScale.Scale = nextS
+    CFG.set("scale", nextS)
+    UI.applyLayout()
+    UI.force = true
+    return nextS
+end
+U.conn(W.scaleBtn.Activated, function() W.scaleBtn.Text = UI.scaleLabel(UI.cycleScale()) end, "escala")
+
+function UI.toggle(state)
+    if state == nil then state = not UI.open end
+    UI.open = state
+    viewport.Visible = state
+    if state then UI.applyLayout(); UI.force = true end
+end
+U.conn(closeBtn.Activated, function() UI.toggle(false) end, "cerrar")
+U.conn(minBtn.Activated, function() UI.collapsed = not UI.collapsed; UI.applyLayout() end, "minimizar")
+
+local function isPress(input)
+    local t = input.UserInputType
+    return t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseButton1
+end
+local function isMove(input)
+    local t = input.UserInputType
+    return t == Enum.UserInputType.Touch or t == Enum.UserInputType.MouseMovement
+end
+local function draggable(handle, target, canDrag, onTap, onEnd)
+    local dragging, startPos, startUD, moved = false, nil, nil, false
+    U.conn(handle.InputBegan, function(input)
+        if not isPress(input) or not canDrag() then return end
+        dragging, moved, startPos, startUD = true, false, input.Position, target.Position
+        local c
+        c = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                if c then c:Disconnect() end
+                dragging = false
+                if moved and onEnd then onEnd() end
+            end
+        end)
+    end, "arrastre")
+    U.conn(S.UIS.InputChanged, function(input)
+        if not dragging or not isMove(input) then return end
+        local d = input.Position - startPos
+        if math.abs(d.X) + math.abs(d.Y) > CONFIG.DRAG_THRESHOLD then moved = true end
+        if not moved then return end
+        local ss, fs = screenSize(), target.AbsoluteSize
+        target.Position = UDim2.fromOffset(math.clamp(startUD.X.Offset + d.X, 0, math.max(0, ss.X - fs.X)),
+            math.clamp(startUD.Y.Offset + d.Y, 0, math.max(0, ss.Y - fs.Y)))
+    end, "arrastre mover")
+    if onTap then U.conn(handle.Activated, function() if not moved then onTap() end moved = false end, "toque") end
+end
+local function saveGeometry()
+    pcall(function()
+        CFG.set("fabX", fab.Position.X.Offset); CFG.set("fabY", fab.Position.Y.Offset)
+        if fitsScreen() then CFG.set("x", panel.Position.X.Offset); CFG.set("y", panel.Position.Y.Offset) end
+    end)
+end
+draggable(fab, fab, function() return true end, function() UI.toggle() end, saveGeometry)
+draggable(titleBar, panel, function() return (fitsScreen()) end, nil, saveGeometry)
+U.conn(screen:GetPropertyChangedSignal("AbsoluteSize"), UI.applyLayout, "giro de pantalla")
+task.defer(UI.applyLayout)
 
 -------------------------------------------------------------------------------
 -- 11. BUCLE (un solo bucle de refresco) + ARRANQUE
@@ -2605,14 +3151,7 @@ end
 local function needsSample(now)
     if not PERF.due(now) then return false end
     if MODE.def.alertsOnly or MODE.def.silent then return true end
-    return UI.open and (UI.tab == "MAIN" or UI.tab == "PERFORMANCE")
-end
-
-local function updateFooter()
-    local left = MODE.captureLeft()
-    local modeTxt = MODE.def.label .. (left and (" " .. string.format(STR.CAPTURE_LEFT, left)) or "")
-    footer.Text = string.format(STR.FOOTER, LOG.paused and HEX.warn or HEX.ok, LOG.paused and STR.PAUSED or STR.LIVE,
-        modeTxt, FEED.label(), #REG.remotes, LOG.total, LOG.suppressed > 0 and string.format(STR.SPAM_SUFFIX, LOG.suppressed) or "", PERF.fps)
+    return UI.open -- las tarjetas de métricas se ven en todas las pestañas
 end
 
 local function renderTab(tab, now)
@@ -2639,15 +3178,20 @@ local function tick()
         PERF.renderRate = PERF.renderWinCount / (now - PERF.renderWin)
         PERF.renderWin, PERF.renderWinCount = now, 0
     end
+    PERF.tickEvents(now)
     if needsSample(now) then PERF.sample() end
     local drawing = MODE.drawAllowed()
     fabDot.BackgroundColor3 = (MODE.def.silent and MODE.alertPending) and TH.bad or (LOG.paused and TH.warn or TH.ok)
     if not drawing then return end  -- Silencioso: no se dibuja nada hasta una alerta
     UI.refreshControls(UI.controlLabels())
     if not UI.open or UI.collapsed then return end
-    updateFooter()
     local tab = UI.tab
+    local forced = UI.force
     if needsRender(tab, now) then renderTab(tab, now) end
+    if forced or now - (LOOP.lastChrome or 0) >= CONFIG.REFRESH.MAIN * (MODE.def.tickMul or 1) then
+        LOOP.lastChrome = now
+        U.try("cromo", UI.renderChrome)
+    end
 end
 
 ---------------- Arranque
@@ -2677,7 +3221,7 @@ REG.watchAttributes(LP, STR.MSG.ATTR_PLAYER)
 onCharacter(LP.Character)
 U.conn(LP.CharacterAdded, onCharacter, "personaje")
 G.UI, G.REG, G.LOG, G.PERF, G.CAP, G.FEED, G.MODE, G.CFG, G.CONFIG, G.STR = UI, REG, LOG, PERF, CAP, FEED, MODE, CFG, CONFIG, STR
-UI.setTab(UI.pages[CFG.get("tab", "MAIN")] and CFG.get("tab", "MAIN") or "MAIN")
+UI.setTab(UI.pages[CFG.get("tab", "LOGS")] and CFG.get("tab", "LOGS") or "LOGS")
 LOG.add("Sistema", "GOY Diagnostics", "", "", nil, string.format(STR.MSG.START, CONFIG.VERSION, CAP.executor))
 task.spawn(REG.initialScan)
 task.spawn(function()
