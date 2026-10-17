@@ -41,7 +41,7 @@ NECESITA ROBLOX STUDIO O ACCESO AL SERVIDOR
 -- Mensajes de registro, ubicaciones, direcciones, detalle y rendimiento
 STR.LOC = {PLAYER_GUI = "Tu PlayerGui", BACKPACK = "Tu Backpack", PLAYER = "Tu jugador", OUTSIDE = "fuera", IN_BACKPACK = "en Backpack", IN = "en %s"}
 STR.DIR = {S2C = "Servidor → Cliente", LOCAL = "Local", REPLICATED = "Replicado", REPLICATED_VALUE = "Servidor → Cliente (replicado)",
-    OBSERVED = "Observado", GUI = "Interfaz local", CONSOLE = "Consola del cliente", C2S = "Cliente → Servidor (%s)",
+    OBSERVED = "Observado", GUI = "Interfaz local", CONSOLE = "Consola del cliente", C2S = "Cliente → Servidor",
     SERVER_NOTICE = "Aviso del servidor", SERVER_STATS = "Métricas del servidor"}
 STR.MSG = {
     NEW_REMOTE = "Nuevo %s en %s", REMOVED = "%s eliminado: %s", NEW_INST = "Nueva %s en %s", INST_RATE = "instancias nuevas en %s",
@@ -90,4 +90,40 @@ STR.PERF = {
     T_NET = "Red: recibe %s · envía %s", T_MEM = "Memoria cliente: %s · scripts %s · montón Lua %s", T_INST = "Instancias (Stats): %s",
     T_SERVER = "Servidor: %s", T_CONSOLE = "Consola: %d errores · %d advertencias",
     T_MONITOR = "Monitor: %d conexiones · render %.2f ms · %.1f actualizaciones/s · modo %s", T_LOGS = "Registros: %d · %.1f/s · errores internos %d",
+}
+
+-- Textos del diseño "Pro" (barra de título, laterales, tarjetas, tabla y barra de estado)
+STR.UI = {
+    TITLE = '<font color="#00DCFF"><b>GOY</b></font><b> DIAGNOSTICS</b><font color="#8C96AF"> v%s · solo lectura</font>',
+    FEED_PILL = 'Feed del servidor · protocolo 2 · confirmado <b>%s</b>',
+    FEED_PILL_PENDING = 'Feed del servidor · protocolo 2 · pidiendo <b>%s</b>',
+    FEED_PILL_NONE = 'Sin feed del servidor (juego sin tu script)',
+    SCALE = "Escala %d%%", MIN = "—", CLOSE = "✕",
+    SIDE_TABS = "Pestañas", SIDE_PLAYERS = "Jugadores", SIDE_MODE = "Modo",
+    SEG = {"Todos", "Solo yo", "Elegir…"},
+    PLAYERS_NOTE = "El filtro se aplica en el servidor y también en el cliente.",
+    INFO = {"Ejecutor", "Copiar", "Archivos", "Config guardada"},
+    M_FPS = "FPS", M_PING = "Ping", M_MEM = "Memoria", M_NET = "Red", M_EPS = "Eventos por s", M_CONSOLE = "Consola",
+    M_FPS_SUB = "frame %s · máx %s", M_MEM_SUB = "scripts %s · Lua %s", M_NET_SUB = "envía %s", M_EPS_SUB = "spam no guardado %d",
+    M_CONSOLE_VAL = "%d err", M_CONSOLE_SUB = "%d advertencias",
+    SEARCH_LOGS = "Buscar jugador, remoto o argumento", SEARCH_GENERIC = "Buscar…",
+    CHIPS_LOGS = {"Todas", "Servidor", "Remote", "Spam", "Valor", "Tool", "Consola", "Cambio", "Botón"},
+    COUNT = "%d de %d eventos", COUNT_ITEMS = "%d elementos",
+    COLS_LOGS = {"Hora", "Categoría", "Jugador", "Evento", "Argumentos", "Tipos"},
+    TOP_REMOTES = "Remotos más activos", TOP_PLAYERS = "Jugadores más activos",
+    TOP_PLAYER_ROW = "%d ev · pico %d/s", FEED_LIMIT_NOTE = "Límite del feed: %d mensajes/s por emisor, %d/s en total.",
+    NO_DATA = "Sin datos todavía", NO_PLAYERS = "Sin datos del servidor (requiere tu script de Studio)",
+    CHART = "Eventos por segundo · últimos %d s", CHART_PEAK = "pico %d/s", AXIS = {"−60 s", "−30 s", "ahora"},
+    DETAIL = "Detalle del evento", DETAIL_ITEM = "Detalle", NO_SELECTION = "Toca una fila para ver su detalle",
+    D_TIME = "Hora", D_PLAYER = "Jugador", D_DIR = "Dirección", D_COUNT = "Recibidos", D_ROUTE = "Ruta", D_ARGS = "Argumentos", D_TYPES = "Tipos",
+    D_COPY = "Copiar", D_WATCH = "Vigilar", D_UNWATCH = "No vigilar", D_INSPECT = "Inspeccionar", D_NO_INST = "Ese objeto no está en tu cliente",
+    FEED_CARD = "Feed del servidor", FEED_BUDGET = "Presupuesto total", FEED_SENDER = "%s · por emisor", FEED_SENDER_NONE = "Por emisor",
+    FEED_PER_S = "%d / %d por s", FEED_DROPPED = "Descartados (aviso)", FEED_MODE = "GOY_DiagMode",
+    NOTE = "Solo lectura. El cliente no ve lo que envía con FireServer ni InvokeServer; esa parte la registra tu script de Studio en el servidor.",
+    ST_LIVE = "EN VIVO", ST_PAUSED = "EN PAUSA", ST_REMOTES = "remotos %d", ST_LOGS = "registros %s", ST_SPAM = "spam no guardado %d",
+    ST_QUEUE = "cola %d (pico %d)", ST_ERRORS = "errores internos %d", ST_MODE = "Modo %s", ST_FPS = "FPS %.0f", ST_PING = "ping %s", ST_VER = "v%s",
+    COLS_MAIN = {"Elemento", "Valor"}, COLS_REMOTES = {"Nombre", "Clase", "Ubicación", "Recibidos", "Último", "Ruta"},
+    COLS_TOOLS = {"Nombre", "Estado", "Dueño / lugar", "Detalle"}, COLS_BUTTONS = {"Texto", "Nombre", "Estado", "Clics", "Ruta"},
+    COLS_PERF = {"Métrica", "Valor", "Detalle"},
+    BACK = "Volver", D_LOC = "Ubicación", D_TEXT = "Texto", NOT_OBS = "no observable",
 }
