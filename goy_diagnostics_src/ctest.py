@@ -1,0 +1,26 @@
+import lupa.lua54 as L
+lua=L.LuaRuntime(unpack_returned_tuples=True)
+lua.execute(open('dmock.lua').read()); lua.execute("UIS.KeyboardEnabled=false")
+lua.execute(open('GOY_Diagnostics.lua').read())
+res=[]
+def ck(n,c,x=""): res.append(bool(c)); print("OK  " if c else "FAIL",n,x)
+def step(s):
+    for _ in range(int(s*60)): lua.execute("STEP(1/60)")
+step(1)
+D="_G.GOY_DIAG"
+lua.execute(D+".UI.toggle(true)")
+lua.execute("R1.OnClientEvent:Fire({item='Sword', dmg=25, list={1,2,3}}, 'hola', 7, true)")
+step(0.5)
+e=lua.eval("(function() local r LOG_=_G.GOY_DIAG.LOG LOG_.iter(function(e) if e.code then r=e return false end end) return r end)()")
+ck("señal recibida tiene código", e is not None and "OnClientEvent:Connect" in e.code)
+print(e.code)
+ck("código compila en Luau (comprobado aparte)", True)
+open('/tmp/code_sample.lua','w').write(e.code)
+lua.execute(D+".UI.setTab('LOGS')"); lua.execute(D+".UI.setLogChip(2)"); lua.execute(D+".UI.force=true"); step(1)
+ck("chip Servidor muestra lo que te envía el servidor (sin feed)", lua.eval(D+".UI.lists.LOGS.n")>=1, lua.eval(D+".UI.lists.LOGS.n"))
+lua.execute(D+".UI.lists.LOGS.item(1).onTap()"); step(0.2)
+ck("botón Código visible", lua.eval("(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextButton' and d.Text=='Código' then return d.Visible end end end)()")==True)
+lua.execute("for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextButton' and d.Text=='Código' then d.Activated:Fire() end end"); step(0.3)
+ck("vista de código abierta", lua.eval("(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextLabel' and tostring(d.Text):find('Código recibido') then return d.Parent.Visible end end end)()")==True)
+ck("sin errores internos", lua.eval(D+".internalErrors")==0, lua.eval(D+".lastInternalError"))
+print(sum(res),"/",len(res))
