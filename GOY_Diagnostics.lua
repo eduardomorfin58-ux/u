@@ -28,6 +28,11 @@
    8 PERF · 9 UI · 10 PESTAÑAS · 11 BUCLE (+arranque) · 12 LIMPIEZA · 13 STUDIO
 --------------------------------------------------------------------------------
  CAMBIOS
+ v1.3.1 · El chip "Servidor" muestra también lo que el servidor TE envía
+        (OnClientEvent, en cualquier juego). Botón "Código" en el detalle: la
+        señal recibida como código Luau de solo lectura (remoto + args + cómo
+        se escucha). PERF empieza con tráfico: eventos/s, remotos y jugadores
+        más activos. Arreglados "…" en las tarjetas móviles.
  v1.3 · Dos versiones: PC (diseño exacto, como panel de computadora: arrastre,
         efecto al pasar el ratón, tecla RightControl para abrir/cerrar) y Móvil
         (744 × 360, cabe en un iPhone horizontal). Botones Móvil | PC en la
@@ -65,7 +70,7 @@
 -- 1. CONFIG — todas las constantes en un solo lugar
 -------------------------------------------------------------------------------
 local CONFIG = {
-    VERSION = "1.3",
+    VERSION = "1.3.1",
 
     -- Registro
     LOG_MAX = 700,                 -- entradas en el búfer circular
@@ -332,6 +337,10 @@ NECESITA ROBLOX STUDIO O ACCESO AL SERVIDOR
 
 -- Mensajes de registro, ubicaciones, direcciones, detalle y rendimiento
 STR.LOC = {PLAYER_GUI = "Tu PlayerGui", BACKPACK = "Tu Backpack", PLAYER = "Tu jugador", OUTSIDE = "fuera", IN_BACKPACK = "en Backpack", IN = "en %s"}
+STR.CODE = {HEAD = "Lo que te envió el servidor (solo lectura; este código no envía nada)",
+    FROM = "Remoto: %s  (%s · Servidor → Cliente)", AT = "Hora: %s · %d argumento(s)",
+    LISTEN = "Así lo escucha un LocalScript de tu juego:", TITLE = "Código recibido · %s",
+    FEED_HEAD = "Lo que registró tu script de Studio (OnServerEvent en TU juego)"}
 STR.DIR = {S2C = "Servidor → Cliente", LOCAL = "Local", REPLICATED = "Replicado", REPLICATED_VALUE = "Servidor → Cliente (replicado)",
     OBSERVED = "Observado", GUI = "Interfaz local", CONSOLE = "Consola del cliente", C2S = "Cliente → Servidor",
     SERVER_NOTICE = "Aviso del servidor", SERVER_STATS = "Métricas del servidor"}
@@ -408,7 +417,7 @@ STR.UI = {
     CHART = "Eventos por segundo · últimos %d s", CHART_PEAK = "pico %d/s", AXIS = {"−60 s", "−30 s", "ahora"},
     DETAIL = "Detalle del evento", DETAIL_ITEM = "Detalle", NO_SELECTION = "Toca una fila para ver su detalle",
     D_TIME = "Hora", D_PLAYER = "Jugador", D_DIR = "Dirección", D_COUNT = "Recibidos", D_ROUTE = "Ruta", D_ARGS = "Argumentos", D_TYPES = "Tipos",
-    D_COPY = "Copiar", D_WATCH = "Vigilar", D_UNWATCH = "No vigilar", D_INSPECT = "Inspeccionar", D_NO_INST = "Ese objeto no está en tu cliente",
+    D_COPY = "Copiar", D_WATCH = "Vigilar", D_UNWATCH = "No vigilar", D_INSPECT = "Inspeccionar", D_CODE = "Código", D_NO_INST = "Ese objeto no está en tu cliente",
     FEED_CARD = "Feed del servidor", FEED_BUDGET = "Presupuesto total", FEED_SENDER = "%s · por emisor", FEED_SENDER_NONE = "Por emisor",
     FEED_PER_S = "%d / %d por s", FEED_DROPPED = "Descartados (aviso)", FEED_MODE = "GOY_DiagMode",
     NOTE = "Solo lectura. El cliente no ve lo que envía con FireServer ni InvokeServer; esa parte la registra tu script de Studio en el servidor.",
@@ -647,6 +656,76 @@ function U.args(...)
     return table.concat(parts, "\n"), types, n
 end
 
+-- Valor → literal de Luau (para ver lo que llegó como código).
+function U.lit(v, ind, budget)
+    ind = ind or ""
+    budget = budget or {n = 0}
+    budget.n = budget.n + 1
+    if budget.n > CONFIG.SER_BUDGET then return "nil --[[…]]" end
+    local t = U.typeOf(v)
+    if t == "string" then return string.format("%q", U.trunc(v, CONFIG.SER_STR * 4)) end
+    if t == "number" or t == "boolean" or t == "nil" then return tostring(v) end
+    if t == "Instance" then return U.pathCode(U.path(v)) end
+    if t == "Vector3" or t == "Vector2" or t == "CFrame" or t == "Color3" or t == "UDim2" or t == "UDim" then
+        return t .. ".new(" .. tostring(v) .. ")"
+    end
+    if t == "EnumItem" then return tostring(v) end
+    if t == "table" then
+        if #ind >= 12 then return "{ --[[…]] }" end
+        local keys, parts = {}, {}
+        for k in pairs(v) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b)
+            local ta, tb = type(a), type(b)
+            if ta ~= tb then return ta < tb end
+            if ta == "number" or ta == "string" then return a < b end
+            return tostring(a) < tostring(b)
+        end)
+        local inner = ind .. "    "
+        for i, k in ipairs(keys) do
+            if i > CONFIG.SER_ITEMS * 2 then parts[#parts + 1] = inner .. "-- … " .. (#keys - i + 1) .. " más"; break end
+            local key = (type(k) == "string" and k:match("^[%a_][%w_]*$")) and k or ("[" .. U.lit(k, inner, budget) .. "]")
+            parts[#parts + 1] = inner .. key .. " = " .. U.lit(v[k], inner, budget) .. ","
+        end
+        if #parts == 0 then return "{}" end
+        return "{\n" .. table.concat(parts, "\n") .. "\n" .. ind .. "}"
+    end
+    return "nil --[[" .. t .. ": " .. U.trunc(tostring(v), 60) .. "]]"
+end
+-- "ReplicatedStorage.Remotes.Damage" → game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Damage")
+function U.pathCode(path)
+    local parts = {}
+    for p in tostring(path or ""):gmatch("[^%.]+") do parts[#parts + 1] = p end
+    if #parts == 0 then return "nil" end
+    local out
+    if parts[1] == "Workspace" or parts[1] == "workspace" then out = "workspace"
+    elseif parts[1] == "Players" or parts[1]:match("^[%u][%a]+$") then out = string.format('game:GetService(%q)', parts[1])
+    else out = string.format("game:FindFirstChild(%q)", parts[1]) end
+    for i = 2, #parts do out = out .. string.format(":WaitForChild(%q)", parts[i]) end
+    return out
+end
+-- Código de solo lectura de una señal recibida: qué llegó y cómo se escucha.
+function U.code(e, stamp, ...)
+    local n = select("#", ...)
+    local pack = {...}
+    local lines = {
+        "-- " .. STR.CODE.HEAD,
+        "-- " .. string.format(STR.CODE.FROM, e.path, e.class),
+        "-- " .. string.format(STR.CODE.AT, stamp, n),
+        "local remote = " .. U.pathCode(e.path),
+        "local args = {",
+    }
+    for i = 1, math.min(n, CONFIG.ARGS_MAX) do
+        lines[#lines + 1] = "    [" .. i .. "] = " .. U.lit(pack[i], "    ") .. ",  -- " .. U.typeOf(pack[i])
+    end
+    lines[#lines + 1] = "}"
+    lines[#lines + 1] = "-- " .. STR.CODE.LISTEN
+    local signal = (e.class == "BindableEvent") and "Event" or "OnClientEvent"
+    lines[#lines + 1] = "remote." .. signal .. ":Connect(function(...)"
+    lines[#lines + 1] = "    print(\"" .. U.trunc(e.name, 40):gsub('"', "") .. "\", ...)"
+    lines[#lines + 1] = "end)"
+    return table.concat(lines, "\n")
+end
+
 function U.copy(text)
     if not CAP.setclipboard then return false end
     return (pcall(CAP.setclipboard, text))
@@ -718,7 +797,7 @@ function LOG.add(cat, name, dir, args, types, extra, meta)
     local e = {id = LOG.total, t = U.stamp(), clock = os.clock(), cat = cat, name = tostring(name or "?"), dir = dir or "",
         args = args or "", types = type(types) == "table" and table.concat(types, ", ") or (types or ""), extra = extra or ""}
     if meta then
-        e.alert, e.kind, e.player, e.userId, e.remote = meta.alert, meta.kind, meta.player, meta.userId, meta.remote
+        e.alert, e.kind, e.player, e.userId, e.remote, e.code = meta.alert, meta.kind, meta.player, meta.userId, meta.remote, meta.code
     end
     LOG.buf[((LOG.total - 1) % LOG.max) + 1] = e
     if LOG.n < LOG.max then LOG.n = LOG.n + 1 end
@@ -841,7 +920,7 @@ local function onRemoteSignal(e, cat, dir, ...)
     if not RATE.ok(e, e.name) then return end
     local a, types = U.args(...)
     e.lastArgs, e.lastTypes = a, table.concat(types, ", ")
-    LOG.add(cat, e.name, dir, a, types, e.path, {remote = e.path})
+    LOG.add(cat, e.name, dir, a, types, e.path, {remote = e.path, code = U.code(e, U.stamp(), ...)})
 end
 
 function REG.addRemote(inst, rootName, class)
@@ -1861,7 +1940,7 @@ local function layoutSeg(x, y, w, h)
 end
 if IS_PC then
     for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 14.4 + (i - 1) * 13.75, 16.7, 8, 8, c, 4, nil, 13) end
-    label(titleBar, {x = 62, y = 10, w = 330, h = 22, text = string.format(STR.UI.TITLE, "1.3"), rich = true, size = 13, font = FONT.sans})
+    label(titleBar, {x = 62, y = 10, w = 330, h = 22, text = string.format(STR.UI.TITLE, CONFIG.VERSION), rich = true, size = 13, font = FONT.sans})
     layoutSeg(520, 10, 116, 22)
     W.pill = box(titleBar, 649.7, 10, 233.3, 22, TH.bar, 11, TH.border, 12)
     W.pillDot = box(W.pill, 12, 8, 6, 6, TH.ok, 3, nil, 14)
@@ -1871,7 +1950,7 @@ if IS_PC then
     closeBtn = button(titleBar, 1000.7, 10, 24.6, 22, STR.UI.CLOSE, TH.bad, TH.bar, nil, 11, FONT.sans)
 else
     for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 12 + (i - 1) * 13, 14, 8, 8, c, 4, nil, 13) end
-    label(titleBar, {x = 52, y = 7, w = 230, h = 22, text = string.format(STR.UI.TITLE_M, "1.3"), rich = true, size = 12, font = FONT.sans})
+    label(titleBar, {x = 52, y = 7, w = 230, h = 22, text = string.format(STR.UI.TITLE_M, CONFIG.VERSION), rich = true, size = 12, font = FONT.sans})
     W.pill = box(titleBar, 296, 6, 156, 24, TH.bar, 12, TH.border, 12)
     W.pillDot = box(W.pill, 10, 9, 6, 6, TH.ok, 3, nil, 14)
     W.pillText = label(W.pill, {x = 21, y = 0, w = 130, h = 24, text = "", rich = true, size = 10.5, color = TH.dim})
@@ -2227,7 +2306,7 @@ else
         local c = box(METRIC.group, (k - 1) * (w + L.METRIC_GAP), 0, w, L.METRIC_H, TH.card, 7, TH.border, 12)
         label(c, {x = 8, y = 3, w = w - 16, h = 13, text = def[2], size = 9.5, color = TH.dim})
         METRIC[def[1]] = {card = c, value = label(c, {x = 8, y = 17, w = 80, h = 20, text = "", size = 15, font = FONT.bold, color = def[3]}),
-            sub = label(c, {x = 0, y = 0, w = 0, h = 0, text = ""}), spark = UI.spark(c, w - 52, 17, 44, 14, def[3]), baseSubY = 0}
+            sub = mk("TextLabel", {Visible = false, Text = ""}, c), spark = UI.spark(c, w - 52, 17, 44, 14, def[3]), baseSubY = 0}
     end
 end
 
@@ -2274,6 +2353,8 @@ do
     DC.copy = button(c, 12.2, 280.3, 62, 28, STR.UI.D_COPY, TH.ok, TH.card, nil, 10.5)
     DC.watch = button(c, 81, 280.3, 61.3, 28, STR.UI.D_WATCH, TH.violet, TH.card, nil, 10.5)
     DC.inspect = button(c, 149.2, 280.3, 64.3, 28, STR.UI.D_INSPECT, TH.text, TH.card, nil, 10.5)
+    -- "Código": lo que llegó, como código de Luau (solo lectura).
+    DC.code = button(c, 150, 175, 64, 20, STR.UI.D_CODE, TH.cyan, TH.chipOn, nil, 10)
 end
 local FC = {}
 if IS_PC then
@@ -2533,6 +2614,7 @@ function UI.showCard(spec)
         chip.t.Text = t or ""
     end
     DC.watch.Text = (spec.inst and WATCH.has(spec.inst)) and STR.UI.D_UNWATCH or STR.UI.D_WATCH
+    DC.code.Visible = spec.code ~= nil
 end
 U.conn(DC.copy.Activated, function() if DC.spec then UI.copyOrShow(STR.DETAIL, DC.spec.copyText or DC.args.Text) end end, "detalle copiar")
 U.conn(DC.watch.Activated, function()
@@ -2541,6 +2623,9 @@ U.conn(DC.watch.Activated, function()
     UI.toast(WATCH.toggle(inst) and string.format(STR.WATCH_ON, CONFIG.MAX_WATCH) or STR.WATCH_OFF)
     UI.showCard(DC.spec)
 end, "detalle vigilar")
+U.conn(DC.code.Activated, function()
+    if DC.spec and DC.spec.code then UI.detail(DC.spec.codeTitle or STR.UI.D_CODE, DC.spec.code) end
+end, "detalle código")
 U.conn(DC.inspect.Activated, function()
     local spec = DC.spec
     if spec and spec.inspect then spec.inspect() return end
@@ -2558,7 +2643,10 @@ local function eventCard(e)
         rows = {{STR.UI.D_TIME, e.t, TH.text, true}, {STR.UI.D_PLAYER, who, e.player and TH.violet or TH.dim},
             {STR.UI.D_DIR, e.dir ~= "" and e.dir or "—"}, {STR.UI.D_COUNT, (rem and ("×" .. rem.count)) or (FEED.byRemote[e.name] and ("×" .. FEED.byRemote[e.name])) or "—", TH.text, true}},
         route = e.remote or (e.extra ~= "" and e.extra) or "—", args = e.args ~= "" and e.args or e.extra, types = types,
-        copyText = LOG.format(e), inst = rem and rem.inst or nil,
+        copyText = e.code or LOG.format(e), inst = rem and rem.inst or nil,
+        code = e.code or (e.cat == "Servidor" and e.args ~= "" and ("-- " .. STR.CODE.FEED_HEAD .. "\n-- " .. tostring(e.remote or e.name) ..
+            (e.player and ("  ·  @" .. tostring(e.player) .. " (" .. tostring(e.userId) .. ")") or "") .. "\n--[[\n" .. e.args .. "\n]]") or nil),
+        codeTitle = string.format(STR.CODE.TITLE, e.name),
     })
 end
 
@@ -2566,10 +2654,14 @@ end
 local CHIPS = STR.UI.CHIPS_LOGS
 local logState = {q = "", chip = CFG.get("logChip", 1), box = nil}
 if not CHIPS[logState.chip] then logState.chip = 1 end
+function UI.setLogChip(i) if CHIPS[i] then logState.chip = i; UI.force = true end end
 local function chipPasses(e)
     local c = CHIPS[logState.chip]
     if c == "Todas" then return true end
     if c == "Spam" then return e.kind == "Spam" end
+    -- "Servidor" = todo lo que viene del servidor: lo que TE envía (OnClientEvent,
+    -- funciona en cualquier juego) + lo que registra tu script de Studio.
+    if c == "Servidor" then return e.cat == "Servidor" or (e.cat == "Remote" and e.dir == STR.DIR.S2C) end
     return e.cat == c
 end
 local function logVisible(e, q)
@@ -3182,6 +3274,26 @@ local function renderPerf()
     local P = STR.PERF
     local items = {}
     local function row(k, v, d, tap, color) items[#items + 1] = {cells = {k, v, d}, onTap = tap, colors = {nil, color}} end
+    -- Estadísticas de tráfico (funcionan en cualquier juego: lo que te envía el servidor).
+    local peak = 0
+    for _, v in ipairs(PERF.eps) do if v > peak then peak = v end end
+    row(STR.UI.M_EPS, string.format("%.1f", PERF.epsNow or 0), string.format(STR.UI.CHART_PEAK, math.floor(peak + 0.5)), nil, TH.warn)
+    local merged = {}
+    for _, e in ipairs(REG.remotes) do if e.count > 0 and e.name ~= CONFIG.FEED_REMOTE then merged[e.name] = (merged[e.name] or 0) + e.count end end
+    for name, c in pairs(FEED.byRemote) do merged[name] = (merged[name] or 0) + c end
+    local top = topList(merged, 5)
+    if #top == 0 then row(STR.UI.TOP_REMOTES, "—", STR.UI.NO_DATA) end
+    for i, it in ipairs(top) do
+        row(i == 1 and STR.UI.TOP_REMOTES or "", "×" .. it.v, tostring(it.k), function()
+            for ci, c in ipairs(CHIPS) do if c == "Servidor" then logState.chip = ci end end
+            UI.logSearch(tostring(it.k))
+        end, TH.cyan)
+    end
+    local players = topList(FEED.byPlayer, 3)
+    if #players == 0 then row(STR.UI.TOP_PLAYERS, "—", U.trim and U.trim(STR.UI.NO_PLAYERS) or STR.UI.NO_PLAYERS) end
+    for i, it in ipairs(players) do
+        row(i == 1 and STR.UI.TOP_PLAYERS or "", tostring(it.v.count), "@" .. tostring(it.k) .. " · " .. string.format(STR.UI.TOP_PLAYER_ROW, it.v.count, it.v.peak), nil, TH.violet)
+    end
     row(STR.UI.M_FPS, fmt(PERF.fps, "%.0f"), string.format(P.FRAME, fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.0f", " ms")), nil,
         PERF.fps >= 50 and TH.ok or (PERF.fps >= 30 and TH.warn or TH.bad))
     row(STR.UI.M_PING, fmt(PERF.ping, "%.0f", " ms"), PERF.pingSrc ~= "" and string.format(P.PING_SRC, PERF.pingSrc) or P.PING_NA, nil,
