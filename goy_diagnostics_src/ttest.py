@@ -1,0 +1,23 @@
+import lupa.lua54 as L
+lua=L.LuaRuntime(unpack_returned_tuples=True)
+lua.execute(open('dmock.lua').read())
+lua.execute("QUEUED=nil function queue_on_teleport(s) QUEUED=s end")
+lua.execute(open('GOY_Diagnostics.lua').read())
+for _ in range(60): lua.execute("STEP(1/60)")
+res=[]
+def ck(n,c,x=""): res.append(bool(c)); print("OK  " if c else "FAIL",n,x)
+find="(function() for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextButton' and tostring(d.Text):find('%s') then return d end end end)()"
+lua.execute("TB="+find % "Teleport")
+ck("botón Teleport (apagado)", lua.eval("TB.Text")=="Teleport: no")
+lua.execute("TB.Activated:Fire()")
+det=lua.eval("(function() local t={} for _,d in ipairs(GUI():GetDescendants()) do if d.ClassName=='TextBox' and d.TextEditable==false and d.Visible then t[#t+1]=d.Text end end return table.concat(t) end)()")
+ck("confirmación muestra la URL", "raw.githubusercontent.com/eduardomorfin58-ux/u/main/GOY_Diagnostics.lua" in det)
+lua.execute("ME.OnTeleport:Fire('Enum.TeleportState.Started')")
+ck("sin confirmar no se encola", lua.eval("QUEUED")==None)
+lua.execute("CB="+find % "Confirmar"); lua.execute("CB.Activated:Fire()")
+ck("confirmado", lua.eval("TB.Text")=="Teleport: recargar")
+lua.execute("ME.OnTeleport:Fire('Enum.TeleportState.Started')")
+ck("encola tras confirmar", "loadstring(game:HttpGet(" in (lua.eval("QUEUED") or ""))
+lua.execute("_G.GOY_DIAG.CFG.set('reloadUrl','https://otra') QUEUED=nil ME.OnTeleport:Fire('Enum.TeleportState.Started')")
+ck("si la URL cambia, exige reconfirmar", lua.eval("QUEUED")==None)
+print(sum(res),"/",len(res))
