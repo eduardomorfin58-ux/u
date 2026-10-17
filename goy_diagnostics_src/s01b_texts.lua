@@ -124,6 +124,10 @@ STR.UI = {
     ST_QUEUE = "cola %d (pico %d)", ST_ERRORS = "errores internos %d", ST_MODE = "Modo %s", ST_FPS = "FPS %.0f", ST_PING = "ping %s", ST_VER = "v%s",
     COLS_MAIN = {"Elemento", "Valor"}, COLS_REMOTES = {"Nombre", "Clase", "Ubicación", "Recibidos", "Último", "Ruta"},
     COLS_TOOLS = {"Nombre", "Estado", "Dueño / lugar", "Detalle"}, COLS_BUTTONS = {"Texto", "Nombre", "Estado", "Clics", "Ruta"},
-    COLS_PERF = {"Métrica", "Valor", "Detalle"},
-    BACK = "Volver", D_LOC = "Ubicación", D_TEXT = "Texto", NOT_OBS = "no observable",
+    COLS_PERF = {"Métrica", "Valor", "Detalle"}, COLS_LOGS_M = {"Hora", "Categoría", "Jugador", "Evento", "Argumentos"},
+    BACK = "Volver", LAYOUT = {"Móvil", "PC"}, SEG_SHORT = {"Todos", "Yo", "Elegir"},
+    TITLE_M = '<font color="#00DCFF"><b>GOY</b></font><b> DIAGNOSTICS</b><font color="#8C96AF"> v%s</font>',
+    FEED_SHORT = "Feed · <b>%s</b>", FEED_SHORT_NONE = "Sin feed", MODE_BTN = "Modo: %s", MODE_PICK = "Elegir modo",
+    PICK_TP = "Elegir jugador · TP", TP = "TP", TP_NONE = "El TP solo funciona en tu juego con el script de Studio v1.3 (GOY_DiagTP).",
+    TP_SENT = "Pidiendo TP a %s…", TP_OK = "Listo: %s", TP_FAIL = "TP no hecho: %s", LAYOUT_SWITCH = "Cambiando a versión %s…", D_LOC = "Ubicación", D_TEXT = "Texto", NOT_OBS = "no observable",
 }
