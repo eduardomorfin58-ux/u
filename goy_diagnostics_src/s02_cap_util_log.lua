@@ -219,6 +219,76 @@ function U.args(...)
     return table.concat(parts, "\n"), types, n
 end
 
+-- Valor → literal de Luau (para ver lo que llegó como código).
+function U.lit(v, ind, budget)
+    ind = ind or ""
+    budget = budget or {n = 0}
+    budget.n = budget.n + 1
+    if budget.n > CONFIG.SER_BUDGET then return "nil --[[…]]" end
+    local t = U.typeOf(v)
+    if t == "string" then return string.format("%q", U.trunc(v, CONFIG.SER_STR * 4)) end
+    if t == "number" or t == "boolean" or t == "nil" then return tostring(v) end
+    if t == "Instance" then return U.pathCode(U.path(v)) end
+    if t == "Vector3" or t == "Vector2" or t == "CFrame" or t == "Color3" or t == "UDim2" or t == "UDim" then
+        return t .. ".new(" .. tostring(v) .. ")"
+    end
+    if t == "EnumItem" then return tostring(v) end
+    if t == "table" then
+        if #ind >= 12 then return "{ --[[…]] }" end
+        local keys, parts = {}, {}
+        for k in pairs(v) do keys[#keys + 1] = k end
+        table.sort(keys, function(a, b)
+            local ta, tb = type(a), type(b)
+            if ta ~= tb then return ta < tb end
+            if ta == "number" or ta == "string" then return a < b end
+            return tostring(a) < tostring(b)
+        end)
+        local inner = ind .. "    "
+        for i, k in ipairs(keys) do
+            if i > CONFIG.SER_ITEMS * 2 then parts[#parts + 1] = inner .. "-- … " .. (#keys - i + 1) .. " más"; break end
+            local key = (type(k) == "string" and k:match("^[%a_][%w_]*$")) and k or ("[" .. U.lit(k, inner, budget) .. "]")
+            parts[#parts + 1] = inner .. key .. " = " .. U.lit(v[k], inner, budget) .. ","
+        end
+        if #parts == 0 then return "{}" end
+        return "{\n" .. table.concat(parts, "\n") .. "\n" .. ind .. "}"
+    end
+    return "nil --[[" .. t .. ": " .. U.trunc(tostring(v), 60) .. "]]"
+end
+-- "ReplicatedStorage.Remotes.Damage" → game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Damage")
+function U.pathCode(path)
+    local parts = {}
+    for p in tostring(path or ""):gmatch("[^%.]+") do parts[#parts + 1] = p end
+    if #parts == 0 then return "nil" end
+    local out
+    if parts[1] == "Workspace" or parts[1] == "workspace" then out = "workspace"
+    elseif parts[1] == "Players" or parts[1]:match("^[%u][%a]+$") then out = string.format('game:GetService(%q)', parts[1])
+    else out = string.format("game:FindFirstChild(%q)", parts[1]) end
+    for i = 2, #parts do out = out .. string.format(":WaitForChild(%q)", parts[i]) end
+    return out
+end
+-- Código de solo lectura de una señal recibida: qué llegó y cómo se escucha.
+function U.code(e, stamp, ...)
+    local n = select("#", ...)
+    local pack = {...}
+    local lines = {
+        "-- " .. STR.CODE.HEAD,
+        "-- " .. string.format(STR.CODE.FROM, e.path, e.class),
+        "-- " .. string.format(STR.CODE.AT, stamp, n),
+        "local remote = " .. U.pathCode(e.path),
+        "local args = {",
+    }
+    for i = 1, math.min(n, CONFIG.ARGS_MAX) do
+        lines[#lines + 1] = "    [" .. i .. "] = " .. U.lit(pack[i], "    ") .. ",  -- " .. U.typeOf(pack[i])
+    end
+    lines[#lines + 1] = "}"
+    lines[#lines + 1] = "-- " .. STR.CODE.LISTEN
+    local signal = (e.class == "BindableEvent") and "Event" or "OnClientEvent"
+    lines[#lines + 1] = "remote." .. signal .. ":Connect(function(...)"
+    lines[#lines + 1] = "    print(\"" .. U.trunc(e.name, 40):gsub('"', "") .. "\", ...)"
+    lines[#lines + 1] = "end)"
+    return table.concat(lines, "\n")
+end
+
 function U.copy(text)
     if not CAP.setclipboard then return false end
     return (pcall(CAP.setclipboard, text))
@@ -290,7 +360,7 @@ function LOG.add(cat, name, dir, args, types, extra, meta)
     local e = {id = LOG.total, t = U.stamp(), clock = os.clock(), cat = cat, name = tostring(name or "?"), dir = dir or "",
         args = args or "", types = type(types) == "table" and table.concat(types, ", ") or (types or ""), extra = extra or ""}
     if meta then
-        e.alert, e.kind, e.player, e.userId, e.remote = meta.alert, meta.kind, meta.player, meta.userId, meta.remote
+        e.alert, e.kind, e.player, e.userId, e.remote, e.code = meta.alert, meta.kind, meta.player, meta.userId, meta.remote, meta.code
     end
     LOG.buf[((LOG.total - 1) % LOG.max) + 1] = e
     if LOG.n < LOG.max then LOG.n = LOG.n + 1 end
