@@ -72,4 +72,25 @@ lua.execute("function ME:GetRankInGroup() return 255 end for i=1,120 do STEP(0.1
 lua.execute("DMG.OnServerEvent:Fire(ME, 1)")
 ck("reintento tras fallo: autorizado", count(lua,"Goy","OnServerEvent")==1, count(lua,"Goy"))
 ck("describe con error no desbalancea el profiler", lua.eval("(function() local bad=setmetatable({},{__pairs=function() error('x') end}) DMG.OnServerEvent:Fire(ME, bad) return PROF end)()")==0)
+
+# ---- v1.3 TP
+lua=setup()
+lua.execute("""
+CFrame={new=function(x,y,z) return setmetatable({x=x or 0,y=y or 0,z=z or 0},CFM) end}
+CFM={__mul=function(a,b) return setmetatable({x=a.x+b.x,y=a.y+b.y,z=a.z+b.z},CFM) end}
+function mkChar(p,x) local hrp={CFrame=CFrame.new(x,0,0)} local ch={PIVOT=nil} function ch:FindFirstChild(n) if n=='HumanoidRootPart' then return hrp end end function ch:PivotTo(cf) self.PIVOT=cf end p.Character=ch end
+mkChar(ME,0) mkChar(RIV,100)
+TPR=RSchildren['GOY_DiagTP']
+""")
+ck("crea GOY_DiagTP", lua.eval("TPR~=nil"))
+clear(lua); lua.execute("TPR.OnServerEvent:Fire(ME,{userId=777})")
+ck("TP mueve al espectador junto al destino", lua.eval("ME.Character.PIVOT and ME.Character.PIVOT.x")==100 and lua.eval("ME.Character.PIVOT.z")==4)
+ck("TP responde ok por el feed", lua.eval("OUT['Goy'][#OUT['Goy']].kind")=="TP" and lua.eval("OUT['Goy'][#OUT['Goy']].ok")==True)
+clear(lua); lua.execute("ME.Character.PIVOT=nil TPR.OnServerEvent:Fire(ME,{userId=777})")
+ck("TP limitado a 1/s", lua.eval("ME.Character.PIVOT")==None and lua.eval("OUT['Goy'][1].ok")==False)
+clear(lua); lua.execute("STEP(1.1) TPR.OnServerEvent:Fire(ME,{userId=999})")
+ck("TP a jugador inexistente rechazado", lua.eval("ME.Character.PIVOT")==None and lua.eval("OUT['Goy'][1].ok")==False)
+lua2=setup(studio=False)
+lua2.execute("RIV.Character={PIVOT=nil, FindFirstChild=function() return {CFrame=0} end, PivotTo=function(self,cf) self.PIVOT=cf end} TPR=RSchildren['GOY_DiagTP'] STEP(30) TPR.OnServerEvent:Fire(RIV,{userId=8812345})")
+ck("TP ignora a no autorizados", lua2.eval("RIV.Character.PIVOT")==None)
 print(sum(res),"/",len(res))
