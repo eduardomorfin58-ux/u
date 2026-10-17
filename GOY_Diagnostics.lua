@@ -19,7 +19,7 @@
    · Para ver lo que llega al servidor en TU juego: MAIN → "Script Studio".
 --------------------------------------------------------------------------------
  ORIGEN Y BUILD
-   Este archivo se genera con build.py a partir de las secciones s01..s12 y de
+   Este archivo se genera con build.py (repo u, goy_diagnostics_src/) a partir de s*.lua y de
    GOY_Diagnostics_Studio_Server.lua (único origen del script de servidor,
    que se incrusta en la sección 13). No edites la sección 13 a mano.
 --------------------------------------------------------------------------------
