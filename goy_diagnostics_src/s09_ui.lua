@@ -323,7 +323,7 @@ local function layoutSeg(x, y, w, h)
 end
 if IS_PC then
     for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 14.4 + (i - 1) * 13.75, 16.7, 8, 8, c, 4, nil, 13) end
-    label(titleBar, {x = 62, y = 10, w = 330, h = 22, text = string.format(STR.UI.TITLE, "1.3"), rich = true, size = 13, font = FONT.sans})
+    label(titleBar, {x = 62, y = 10, w = 330, h = 22, text = string.format(STR.UI.TITLE, CONFIG.VERSION), rich = true, size = 13, font = FONT.sans})
     layoutSeg(520, 10, 116, 22)
     W.pill = box(titleBar, 649.7, 10, 233.3, 22, TH.bar, 11, TH.border, 12)
     W.pillDot = box(W.pill, 12, 8, 6, 6, TH.ok, 3, nil, 14)
@@ -333,7 +333,7 @@ if IS_PC then
     closeBtn = button(titleBar, 1000.7, 10, 24.6, 22, STR.UI.CLOSE, TH.bad, TH.bar, nil, 11, FONT.sans)
 else
     for i, c in ipairs({TH.red, TH.yellow, TH.green}) do box(titleBar, 12 + (i - 1) * 13, 14, 8, 8, c, 4, nil, 13) end
-    label(titleBar, {x = 52, y = 7, w = 230, h = 22, text = string.format(STR.UI.TITLE_M, "1.3"), rich = true, size = 12, font = FONT.sans})
+    label(titleBar, {x = 52, y = 7, w = 230, h = 22, text = string.format(STR.UI.TITLE_M, CONFIG.VERSION), rich = true, size = 12, font = FONT.sans})
     W.pill = box(titleBar, 296, 6, 156, 24, TH.bar, 12, TH.border, 12)
     W.pillDot = box(W.pill, 10, 9, 6, 6, TH.ok, 3, nil, 14)
     W.pillText = label(W.pill, {x = 21, y = 0, w = 130, h = 24, text = "", rich = true, size = 10.5, color = TH.dim})
