@@ -1,6 +1,6 @@
 --[[
 ================================================================================
- GOY DIAGNOSTICS · SCRIPT DE SERVIDOR v1.2 (solo para TU propio juego)
+ GOY DIAGNOSTICS · SCRIPT DE SERVIDOR v1.3 (solo para TU propio juego)
  Dónde va: ServerScriptService → Script (no LocalScript).
 --------------------------------------------------------------------------------
  QUÉ HACE
@@ -16,6 +16,8 @@
    · Cada espectador elige qué ver por GOY_DiagMode: "all" (todos), "me" (solo
      sus propios eventos) o un UserId presente. El filtro se aplica AQUÍ, antes
      de enviar: no se gasta red en lo que no ve.
+   · TP por GOY_DiagTP: un espectador autorizado puede ir junto a otro jugador
+     de ESTE juego (por UserId). Valida autorización, 1 TP/s y personajes.
    · Presupuesto por espectador y por emisor: el spam de un jugador no puede
      gastar el cupo de los demás, y tus propios eventos tienen cupo reservado.
 --------------------------------------------------------------------------------
@@ -26,6 +28,7 @@
      reintenta; los fallos no se guardan).
    · Los UserId de AUTHORIZED.
 --------------------------------------------------------------------------------
+ CAMBIOS v1.3: GOY_DiagTP (TP a jugadores por UserId, solo autorizados).
  CAMBIOS v1.2: presupuesto por espectador/emisor · feed estructurado (tipo,
  remoto, jugador, userId, args, tipos) · modos all/me/UserId validados en el
  servidor (máx. 2 peticiones/s) · autorización en PlayerAdded sin cachear fallos
@@ -48,6 +51,9 @@ local CONFIG = {
     ARGS_MAX = 10, STR_MAX = 100, TABLE_ITEMS = 10, TABLE_DEPTH = 2,
     FEED_REMOTE = "GOY_DiagFeed",
     MODE_REMOTE = "GOY_DiagMode",
+    TP_REMOTE = "GOY_DiagTP",   -- TP a otro jugador, solo para autorizados y solo en este juego
+    TP_COOLDOWN = 1,            -- s entre TPs por jugador
+    TP_OFFSET = 4,              -- studs detrás del jugador destino
     PROTOCOL = 2,
 }
 
@@ -218,7 +224,35 @@ modeRemote.OnServerEvent:Connect(function(player, req)
     local mode = validMode(raw)
     if mode then v.mode = mode end
     feed:FireClient(player, {v = CONFIG.PROTOCOL, kind = "Mode", mode = v.mode, ok = mode ~= nil,
-        reason = mode and nil or "valor no válido (usa all, me o un UserId presente)"})
+        reason = (not mode) and "valor no válido (usa all, me o un UserId presente)" or nil})
+end)
+
+---------------------------------------------------------------- TP (GOY_DiagTP)
+-- Solo mueve al propio espectador autorizado junto a otro jugador de ESTE juego.
+local tpRemote = getRemote(CONFIG.TP_REMOTE)
+local lastTp = setmetatable({}, {__mode = "k"})
+local function rootOf(p)
+    local ch = p and p.Character
+    return ch and ch:FindFirstChild("HumanoidRootPart"), ch
+end
+tpRemote.OnServerEvent:Connect(function(player, req)
+    local function reply(ok, msg)
+        feed:FireClient(player, {v = CONFIG.PROTOCOL, kind = "TP", ok = ok, msg = msg})
+    end
+    if not viewers[player] then return end -- no autorizado: se ignora
+    local now = os.clock()
+    if lastTp[player] and now - lastTp[player] < CONFIG.TP_COOLDOWN then return reply(false, "espera un segundo") end
+    lastTp[player] = now
+    local id = tonumber(type(req) == "table" and req.userId or req)
+    local target = id and Players:GetPlayerByUserId(id)
+    if not target then return reply(false, "ese jugador no está en el servidor") end
+    if target == player then return reply(false, "no puedes hacer TP a ti mismo") end
+    local to = rootOf(target)
+    local from, ch = rootOf(player)
+    if not to or not from then return reply(false, "falta el personaje de alguno de los dos") end
+    ch:PivotTo(to.CFrame * CFrame.new(0, 0, CONFIG.TP_OFFSET))
+    print(("[GOY DIAG] TP: %s → %s"):format(player.Name, target.Name))
+    reply(true, "TP a " .. target.Name)
 end)
 
 ---------------------------------------------------------------- REGISTRO DE EVENTOS
@@ -255,7 +289,7 @@ end
 
 local hooked = setmetatable({}, {__mode = "k"})
 local function hook(obj)
-    if hooked[obj] or obj == feed or obj == modeRemote then return end
+    if hooked[obj] or obj == feed or obj == modeRemote or obj == tpRemote then return end
     local ok, isRemote = pcall(function() return obj:IsA("RemoteEvent") or obj:IsA("UnreliableRemoteEvent") end)
     if ok and isRemote then
         hooked[obj] = true
