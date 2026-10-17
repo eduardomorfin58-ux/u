@@ -29,10 +29,10 @@ end
 
 local FEED_KINDS = {
     OnServerEvent = function(m)
-        return "Servidor", shortName(m.remote), string.format(STR.DIR.C2S, m.kind), false
+        return "Servidor", shortName(m.remote), STR.DIR.C2S, false
     end,
     OnServerInvoke = function(m)
-        return "Servidor", shortName(m.remote), string.format(STR.DIR.C2S, m.kind), false
+        return "Servidor", shortName(m.remote), STR.DIR.C2S, false
     end,
     Spam = function(m)
         return "Servidor", string.format(STR.MSG.SPAM, shortName(m.remote)), STR.DIR.SERVER_NOTICE, true
@@ -61,11 +61,36 @@ function FEED.onMessage(e, ...)
     local isControl = m.kind == "Mode" or m.kind == "Dropped"
     if not isControl and not RATE.ok(e, STR.MSG.FEED_RATE, CONFIG.RATE_FEED) then return end
     if m.userId then FEED.names[m.userId] = m.player end
+    if m.kind == "OnServerEvent" or m.kind == "OnServerInvoke" then FEED.count(m) end
     local cat, name, dir, alert = "Servidor", m.kind, "", false
     if handler then cat, name, dir, alert = handler(m) end
     local extra = m.msg or (m.reason and tostring(m.reason)) or (m.count and string.format(STR.MSG.FEED_DROPPED_N, tostring(m.count))) or ""
     LOG.add(cat, name, dir, m.args and tostring(m.args) or "", m.types and tostring(m.types) or "", extra,
         {kind = m.kind, player = m.player, userId = m.userId, remote = m.remote, alert = alert})
+end
+
+-- Contadores para "Remotos / Jugadores más activos" y el presupuesto por segundo.
+FEED.byRemote, FEED.byPlayer, FEED.sec = {}, {}, {start = os.clock(), total = 0, bySender = {}, lastTotal = 0, lastTop = 0, lastTopName = nil}
+function FEED.count(m)
+    local name = shortName(m.remote)
+    FEED.byRemote[name] = (FEED.byRemote[name] or 0) + 1
+    local now = os.clock()
+    local sec = FEED.sec
+    if now - sec.start >= 1 then
+        local top, topName = 0, nil
+        for n, c in pairs(sec.bySender) do if c > top then top, topName = c, n end end
+        sec.lastTotal, sec.lastTop, sec.lastTopName = sec.total, top, topName
+        sec.start, sec.total, sec.bySender = now, 0, {}
+    end
+    sec.total = sec.total + 1
+    if m.player then
+        sec.bySender[m.player] = (sec.bySender[m.player] or 0) + 1
+        local p = FEED.byPlayer[m.player] or {count = 0, peak = 0, winStart = now, win = 0}
+        if now - p.winStart >= 1 then p.winStart, p.win = now, 0 end
+        p.count, p.win = p.count + 1, p.win + 1
+        if p.win > p.peak then p.peak = p.win end
+        FEED.byPlayer[m.player] = p
+    end
 end
 
 REG.specials[CONFIG.FEED_REMOTE] = function(e, inst)
@@ -318,7 +343,28 @@ function PERF.sample()
         PERF.logRate = math.max(0, LOG.total - PERF.logWinTotal) / (now - PERF.logWinStart)
         PERF.logWinTotal, PERF.logWinStart = LOG.total, now
     end
+    PERF.push("pingHist", PERF.ping or 0)
+    PERF.push("memHist", PERF.mem or 0)
+    PERF.push("netHist", PERF.recv or 0)
+    PERF.push("consoleHist", CONSOLE.errors + CONSOLE.warnings)
     checkPerfAlerts(now)
+end
+
+-- Historiales para mini gráficas y la gráfica de eventos/s.
+function PERF.push(key, v)
+    local h = PERF[key]
+    if not h then h = {}; PERF[key] = h end
+    h[#h + 1] = v
+    if #h > CONFIG.PERF_HISTORY then table.remove(h, 1) end
+end
+PERF.eps, PERF.epsWin, PERF.epsLast, PERF.epsNow = {}, os.clock(), 0, 0
+function PERF.tickEvents(now)
+    if now - PERF.epsWin < 1 then return end
+    local total = LOG.total + LOG.suppressed + LOG.droppedPaused
+    PERF.epsNow = math.max(0, total - PERF.epsLast) / (now - PERF.epsWin)
+    PERF.epsLast, PERF.epsWin = total, now
+    PERF.eps[#PERF.eps + 1] = PERF.epsNow
+    if #PERF.eps > CONFIG.L.CHART_SECONDS then table.remove(PERF.eps, 1) end
 end
 
 function PERF.due(now)
