@@ -145,7 +145,7 @@ else
         local c = box(METRIC.group, (k - 1) * (w + L.METRIC_GAP), 0, w, L.METRIC_H, TH.card, 7, TH.border, 12)
         label(c, {x = 8, y = 3, w = w - 16, h = 13, text = def[2], size = 9.5, color = TH.dim})
         METRIC[def[1]] = {card = c, value = label(c, {x = 8, y = 17, w = 80, h = 20, text = "", size = 15, font = FONT.bold, color = def[3]}),
-            sub = label(c, {x = 0, y = 0, w = 0, h = 0, text = ""}), spark = UI.spark(c, w - 52, 17, 44, 14, def[3]), baseSubY = 0}
+            sub = mk("TextLabel", {Visible = false, Text = ""}, c), spark = UI.spark(c, w - 52, 17, 44, 14, def[3]), baseSubY = 0}
     end
 end
 
@@ -192,6 +192,8 @@ do
     DC.copy = button(c, 12.2, 280.3, 62, 28, STR.UI.D_COPY, TH.ok, TH.card, nil, 10.5)
     DC.watch = button(c, 81, 280.3, 61.3, 28, STR.UI.D_WATCH, TH.violet, TH.card, nil, 10.5)
     DC.inspect = button(c, 149.2, 280.3, 64.3, 28, STR.UI.D_INSPECT, TH.text, TH.card, nil, 10.5)
+    -- "Código": lo que llegó, como código de Luau (solo lectura).
+    DC.code = button(c, 150, 175, 64, 20, STR.UI.D_CODE, TH.cyan, TH.chipOn, nil, 10)
 end
 local FC = {}
 if IS_PC then
@@ -451,6 +453,7 @@ function UI.showCard(spec)
         chip.t.Text = t or ""
     end
     DC.watch.Text = (spec.inst and WATCH.has(spec.inst)) and STR.UI.D_UNWATCH or STR.UI.D_WATCH
+    DC.code.Visible = spec.code ~= nil
 end
 U.conn(DC.copy.Activated, function() if DC.spec then UI.copyOrShow(STR.DETAIL, DC.spec.copyText or DC.args.Text) end end, "detalle copiar")
 U.conn(DC.watch.Activated, function()
@@ -459,6 +462,9 @@ U.conn(DC.watch.Activated, function()
     UI.toast(WATCH.toggle(inst) and string.format(STR.WATCH_ON, CONFIG.MAX_WATCH) or STR.WATCH_OFF)
     UI.showCard(DC.spec)
 end, "detalle vigilar")
+U.conn(DC.code.Activated, function()
+    if DC.spec and DC.spec.code then UI.detail(DC.spec.codeTitle or STR.UI.D_CODE, DC.spec.code) end
+end, "detalle código")
 U.conn(DC.inspect.Activated, function()
     local spec = DC.spec
     if spec and spec.inspect then spec.inspect() return end
@@ -476,7 +482,10 @@ local function eventCard(e)
         rows = {{STR.UI.D_TIME, e.t, TH.text, true}, {STR.UI.D_PLAYER, who, e.player and TH.violet or TH.dim},
             {STR.UI.D_DIR, e.dir ~= "" and e.dir or "—"}, {STR.UI.D_COUNT, (rem and ("×" .. rem.count)) or (FEED.byRemote[e.name] and ("×" .. FEED.byRemote[e.name])) or "—", TH.text, true}},
         route = e.remote or (e.extra ~= "" and e.extra) or "—", args = e.args ~= "" and e.args or e.extra, types = types,
-        copyText = LOG.format(e), inst = rem and rem.inst or nil,
+        copyText = e.code or LOG.format(e), inst = rem and rem.inst or nil,
+        code = e.code or (e.cat == "Servidor" and e.args ~= "" and ("-- " .. STR.CODE.FEED_HEAD .. "\n-- " .. tostring(e.remote or e.name) ..
+            (e.player and ("  ·  @" .. tostring(e.player) .. " (" .. tostring(e.userId) .. ")") or "") .. "\n--[[\n" .. e.args .. "\n]]") or nil),
+        codeTitle = string.format(STR.CODE.TITLE, e.name),
     })
 end
 
@@ -484,10 +493,14 @@ end
 local CHIPS = STR.UI.CHIPS_LOGS
 local logState = {q = "", chip = CFG.get("logChip", 1), box = nil}
 if not CHIPS[logState.chip] then logState.chip = 1 end
+function UI.setLogChip(i) if CHIPS[i] then logState.chip = i; UI.force = true end end
 local function chipPasses(e)
     local c = CHIPS[logState.chip]
     if c == "Todas" then return true end
     if c == "Spam" then return e.kind == "Spam" end
+    -- "Servidor" = todo lo que viene del servidor: lo que TE envía (OnClientEvent,
+    -- funciona en cualquier juego) + lo que registra tu script de Studio.
+    if c == "Servidor" then return e.cat == "Servidor" or (e.cat == "Remote" and e.dir == STR.DIR.S2C) end
     return e.cat == c
 end
 local function logVisible(e, q)
@@ -1100,6 +1113,26 @@ local function renderPerf()
     local P = STR.PERF
     local items = {}
     local function row(k, v, d, tap, color) items[#items + 1] = {cells = {k, v, d}, onTap = tap, colors = {nil, color}} end
+    -- Estadísticas de tráfico (funcionan en cualquier juego: lo que te envía el servidor).
+    local peak = 0
+    for _, v in ipairs(PERF.eps) do if v > peak then peak = v end end
+    row(STR.UI.M_EPS, string.format("%.1f", PERF.epsNow or 0), string.format(STR.UI.CHART_PEAK, math.floor(peak + 0.5)), nil, TH.warn)
+    local merged = {}
+    for _, e in ipairs(REG.remotes) do if e.count > 0 and e.name ~= CONFIG.FEED_REMOTE then merged[e.name] = (merged[e.name] or 0) + e.count end end
+    for name, c in pairs(FEED.byRemote) do merged[name] = (merged[name] or 0) + c end
+    local top = topList(merged, 5)
+    if #top == 0 then row(STR.UI.TOP_REMOTES, "—", STR.UI.NO_DATA) end
+    for i, it in ipairs(top) do
+        row(i == 1 and STR.UI.TOP_REMOTES or "", "×" .. it.v, tostring(it.k), function()
+            for ci, c in ipairs(CHIPS) do if c == "Servidor" then logState.chip = ci end end
+            UI.logSearch(tostring(it.k))
+        end, TH.cyan)
+    end
+    local players = topList(FEED.byPlayer, 3)
+    if #players == 0 then row(STR.UI.TOP_PLAYERS, "—", U.trim and U.trim(STR.UI.NO_PLAYERS) or STR.UI.NO_PLAYERS) end
+    for i, it in ipairs(players) do
+        row(i == 1 and STR.UI.TOP_PLAYERS or "", tostring(it.v.count), "@" .. tostring(it.k) .. " · " .. string.format(STR.UI.TOP_PLAYER_ROW, it.v.count, it.v.peak), nil, TH.violet)
+    end
     row(STR.UI.M_FPS, fmt(PERF.fps, "%.0f"), string.format(P.FRAME, fmt(PERF.frameAvg * 1000, "%.1f", " ms"), fmt(PERF.lastFrameMax * 1000, "%.0f", " ms")), nil,
         PERF.fps >= 50 and TH.ok or (PERF.fps >= 30 and TH.warn or TH.bad))
     row(STR.UI.M_PING, fmt(PERF.ping, "%.0f", " ms"), PERF.pingSrc ~= "" and string.format(P.PING_SRC, PERF.pingSrc) or P.PING_NA, nil,
