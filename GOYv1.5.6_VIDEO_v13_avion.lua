@@ -11576,14 +11576,22 @@ task.spawn(function()
             end
             return top
         end
+        -- Si el nombre "tractor" está en una pieza o carpeta interna, sube hasta el Model del juguete.
+        local function toyRoot(d)
+            local t = topTractor(d)
+            local m = t:IsA("Model") and t or t:FindFirstAncestorWhichIsA("Model")
+            if m and m ~= workspace and m.Parent then return m end
+            return t:IsA("BasePart") and t or nil
+        end
         local function findTractors()
             local list, seen = {}, {}
             for _, d in ipairs(workspace:GetDescendants()) do
-                if isTractor(d) and not d:IsDescendantOf(workspace.CurrentCamera) then
-                    local t = topTractor(d)
-                    if not seen[t] then seen[t] = true; list[#list + 1] = t end
+                if string.find(string.lower(d.Name), F15.TARGET_NAME, 1, true) and not d:IsDescendantOf(workspace.CurrentCamera) then
+                    local t = toyRoot(d)
+                    if t and not seen[t] then seen[t] = true; list[#list + 1] = t end
                 end
             end
+            S.lastFound = list[1] and list[1]:GetFullName() or nil
             return list
         end
         local function setHidden(t, hide)
@@ -11746,6 +11754,7 @@ task.spawn(function()
         status.TextSize = 12
         status.TextColor3 = Color3.fromRGB(150, 156, 168)
         status.TextXAlignment = Enum.TextXAlignment.Left
+        status.TextTruncate = Enum.TextTruncate.AtEnd
         status.Text = "Cargando imágenes…"
         noTr(status)
         status.Parent = panel
@@ -11766,7 +11775,7 @@ task.spawn(function()
             planeStroke.Color = on and Color3.fromRGB(90, 169, 230) or Color3.fromRGB(60, 63, 72)
             normalStroke.Color = on and Color3.fromRGB(60, 63, 72) or Color3.fromRGB(120, 200, 120)
             if on then
-                status.Text = (count and count > 0) and ("Avión activo en " .. count .. " tractor(es)") or "Avión activo · esperando un Tractor"
+                status.Text = (count and count > 0) and ("Avión en " .. count .. ": " .. tostring(S.lastFound)) or "Avión activo · no veo ningún tractor en el mapa"
             else
                 status.Text = "Normal · los tractores se ven como siempre"
             end
@@ -11777,7 +11786,7 @@ task.spawn(function()
             local n = turnOn()
             refresh(n)
             if n == 0 then say("No veo ningún objeto llamado Tractor. Cuando aparezca uno se convertirá en avión (solo en tu pantalla).")
-            else say("✈ " .. n .. " tractor(es) ahora se ven como F-15, solo en tu pantalla.") end
+            else say("✈ " .. n .. " tractor(es) ahora son F-15 (solo tú lo ves): " .. tostring(S.lastFound)) end
         end)
         normalBtn.Activated:Connect(function()
             turnOff()
