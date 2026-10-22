@@ -32,7 +32,9 @@ local CFG = {
 	RIM_COLOR       = Color3.fromRGB(250, 252, 255),
 	STRIDE          = 2.3,           -- distancia entre pasos (studs)
 	PRINT_LIFE      = 7,             -- segundos visibles antes de desvanecer
-	PRINT_FADE      = 4,             -- segundos de desvanecido
+	PRINT_FADE      = 4,
+	PRINT_ROT       = 0,             -- si la huella sale al revés pon 180
+	GROUND_TILE     = 14,            -- tamaño de la textura de nieve (studs)             -- segundos de desvanecido
 	MAX_PRINTS      = 70,
 	MOUNDS          = 46,
 	MOUND_RADIUS    = 230,
@@ -42,6 +44,25 @@ local CFG = {
 }
 local SOFT = "rbxasset://textures/particles/smoke_main.dds"
 local SPARK = "rbxasset://textures/particles/sparkles_main.dds"
+
+-- Texturas realistas (huella con relieve horneado, nieve del suelo, copo, bokeh)
+-- se descargan una vez del repo y se cargan con getcustomasset. Si el executor no
+-- lo soporta, se usa la versión de piezas 3D.
+local RAW = "https://raw.githubusercontent.com/eduardomorfin58-ux/u/main/goy_snow/"
+local ASSET = {}
+local function loadAsset(name)
+	if ASSET[name] ~= nil then return ASSET[name] or nil end
+	local ok, id = pcall(function()
+		local gca = getcustomasset or getsynasset
+		if not (gca and writefile and isfile) then return nil end
+		if makefolder and isfolder and not isfolder("GOY_Snow") then makefolder("GOY_Snow") end
+		local path = "GOY_Snow/" .. name
+		if not isfile(path) then writefile(path, game:HttpGet(RAW .. name)) end
+		return gca(path)
+	end)
+	ASSET[name] = (ok and id) or false
+	return ASSET[name] or nil
+end
 
 ---------------------------------------------------------------------
 -- ESTADO
@@ -137,6 +158,14 @@ local function convert(p)
 		S.floorSet[p] = true
 		p.Material = Enum.Material.Snow
 		p.Color = CFG.SNOW_COLOR
+		if S.groundTex and p.Size.X * p.Size.Z > 30 then
+			made(new("Texture", {
+				Name = "GOY_SnowTex", Texture = S.groundTex,
+				Face = (p.CFrame.UpVector.Y >= 0) and Enum.NormalId.Top or Enum.NormalId.Bottom,
+				StudsPerTileU = CFG.GROUND_TILE, StudsPerTileV = CFG.GROUND_TILE,
+				Transparency = 0.2,
+			}, p))
+		end
 	else
 		local m = p.Material
 		if m ~= Enum.Material.Glass and m ~= Enum.Material.Metal and m ~= Enum.Material.DiamondPlate then
@@ -326,12 +355,14 @@ end
 local flakePart, bokehPart, flakes2
 
 local function makeParticles()
+	local FLAKE = loadAsset("flake.png") or SOFT
+	local BOKEH = loadAsset("bokeh.png") or SOFT
 	flakePart = new("Part", {
 		Name = "GOY_SnowEmitter", Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false,
 		Transparency = 1, Size = Vector3.new(160, 1, 160),
 	}, fx)
 	new("ParticleEmitter", {
-		Texture = SOFT, Rate = CFG.FLAKE_RATE,
+		Texture = FLAKE, Rate = CFG.FLAKE_RATE,
 		Lifetime = NumberRange.new(6, 10),
 		Speed = NumberRange.new(4, 8),
 		EmissionDirection = Enum.NormalId.Bottom,
@@ -381,11 +412,11 @@ local function makeParticles()
 		Transparency = 1, Size = Vector3.new(9, 5, 0.2),
 	}, fx)
 	new("ParticleEmitter", {
-		Texture = SOFT, Rate = CFG.BOKEH_RATE, LockedToPart = true,
+		Texture = BOKEH, Rate = CFG.BOKEH_RATE, LockedToPart = true,
 		Lifetime = NumberRange.new(1.6, 2.6), Speed = NumberRange.new(0.4, 1),
 		EmissionDirection = Enum.NormalId.Bottom,
 		SpreadAngle = Vector2.new(40, 40),
-		Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.35), NumberSequenceKeypoint.new(1, 0.55) }),
+		Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.4), NumberSequenceKeypoint.new(1, 0.75) }),
 		Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.3, 0.55), NumberSequenceKeypoint.new(0.75, 0.6), NumberSequenceKeypoint.new(1, 1) }),
 		LightEmission = 0.35, LightInfluence = 0.3,
 		Color = ColorSequence.new(Color3.fromRGB(250, 252, 255)),
@@ -398,6 +429,11 @@ local function updateParticles()
 	local cf = cam.CFrame
 	if flakePart then
 		flakePart.CFrame = CFrame.new(cf.Position + Vector3.new(-10, 40, -6))
+		-- ráfagas de viento suaves
+		local t = os.clock()
+		local g = 1 + 0.6 * math.sin(t * 0.35) + 0.3 * math.sin(t * 1.3)
+		local em = flakePart:FindFirstChildOfClass("ParticleEmitter")
+		if em then em.Acceleration = Vector3.new(3.2 * g, -1.2, 1.6 * g) end
 	end
 	if bokehPart then
 		bokehPart.CFrame = cf * CFrame.new(0, 0.6, -3.2)
@@ -451,8 +487,10 @@ end
 
 local function fadePrint(model)
 	local info = TweenInfo.new(CFG.PRINT_FADE, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-	for _, p in ipairs(model:GetChildren()) do
-		if p:IsA("BasePart") then
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("Decal") then
+			TweenService:Create(p, info, { Transparency = 1 }):Play()
+		elseif p:IsA("BasePart") and p.Transparency < 1 then
 			TweenService:Create(p, info, { Transparency = 1 }):Play()
 			local m = p:FindFirstChildOfClass("SpecialMesh")
 			if m then TweenService:Create(m, info, { Scale = m.Scale * Vector3.new(1.05, 0.3, 1.05) }):Play() end
@@ -472,8 +510,28 @@ local function makePrint(pos, normal, forward, left, scale)
 	local mirror = left and 1 or -1
 	local model = new("Model", { Name = left and "HuellaIzq" or "HuellaDer" })
 	local s = scale
+	local texId = left and S.printL or S.printR
 
-	for _, seg in ipairs(SOLE) do
+	if texId then
+		-- huella realista: textura con relieve, sombra azul y borde rebotado horneados
+		local holder = new("Part", {
+			Anchored = true, CanCollide = false, CanQuery = false, CanTouch = false, CastShadow = false,
+			Transparency = 1, Size = Vector3.new(1.2 * s, 0.05, 2.4 * s),
+			CFrame = base * CFrame.Angles(0, math.rad(CFG.PRINT_ROT), 0) * CFrame.new(0, 0.03, 0),
+		})
+		new("Decal", { Texture = texId, Face = Enum.NormalId.Top, Transparency = 0.02 }, holder)
+		holder.Parent = model
+		-- terrones de nieve que salen despedidos alrededor
+		local rng = Random.new()
+		for k = 1, rng:NextInteger(3, 6) do
+			local a = rng:NextNumber(0, math.pi * 2)
+			local rx, rz = math.cos(a) * 0.62 * s, math.sin(a) * 1.15 * s
+			local d = rng:NextNumber(0.1, 0.22) * s
+			piece(base * CFrame.new(rx, d * 0.15, rz), Vector3.new(d, d * 0.7, d), CFG.RIM_COLOR, Enum.MeshType.Sphere, 0, model)
+		end
+	end
+
+	for _, seg in ipairs(texId and {} or SOLE) do
 		local c = base * CFrame.new(seg.x * mirror * s, 0, seg.z * s)
 		-- borde rebotado (nieve desplazada, un poco elevada)
 		piece(c * CFrame.new(0, -0.02, 0), Vector3.new(seg.w * 1.55, 0.2, seg.l * 1.38) * s, CFG.RIM_COLOR, Enum.MeshType.Sphere, 0, model)
@@ -483,11 +541,11 @@ local function makePrint(pos, normal, forward, left, scale)
 		piece(c * CFrame.new(0, 0.04, 0), Vector3.new(seg.w, 0.012, seg.l) * s, CFG.PRINT_COLOR, Enum.MeshType.Cylinder, 0.05, model)
 	end
 	-- marcas de la suela (dibujo) en planta y talón
-	for k = 0, 3 do
+	for k = 0, (texId and -1 or 3) do
 		local z = (-0.62 + k * 0.17) * s
 		piece(base * CFrame.new(0.02 * mirror * s, 0.047, z), Vector3.new(0.5 * s, 0.01, 0.045 * s), CFG.PRINT_DEEP, Enum.MeshType.Brick, 0.25, model)
 	end
-	for k = 0, 1 do
+	for k = 0, (texId and -1 or 1) do
 		piece(base * CFrame.new(0, 0.047, (0.5 + k * 0.17) * s), Vector3.new(0.36 * s, 0.01, 0.04 * s), CFG.PRINT_DEEP, Enum.MeshType.Brick, 0.3, model)
 	end
 	-- Cylinder mesh queda acostado sobre X; lo ponemos de pie
@@ -547,6 +605,9 @@ local function enable()
 	fx = new("Folder", { Name = "GOY_SnowFX" }, workspace)
 	made(fx)
 	refreshFilter()
+	S.groundTex = loadAsset("snow_ground.png")
+	S.printL = loadAsset("footprint_L.png")
+	S.printR = loadAsset("footprint_R.png")
 	setupSky()
 	convertTerrain()
 	for _, d in ipairs(workspace:GetDescendants()) do
